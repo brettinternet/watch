@@ -8,6 +8,7 @@ tasks:
     cmds:
       - task: mise
       - task: worktree
+      - task: config
 
   mise:
     desc: Install workstation dependencies
@@ -28,6 +29,14 @@ tasks:
   deps:
     desc: Install Bun dependencies
     cmd: mise exec bun -- bun install --frozen-lockfile
+
+  config:
+    desc: Scaffold triage.local.yaml from the example if missing
+    status:
+      - test -f triage.local.yaml
+    cmds:
+      - cp triage.example.yaml triage.local.yaml
+      - echo "Wrote triage.local.yaml — edit its sources"
 
   slack:
     desc: "Extract this machine's Slack stealth tokens into .env.local, e.g. task setup:slack -- acme"

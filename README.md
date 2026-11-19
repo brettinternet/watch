@@ -23,7 +23,7 @@ flowchart TD
 
 Each clone is configured separately:
 
-1. Run `task init` to install tools and dependencies, create `.env.local`, and install hooks.
+1. Run `task init` to install tools and dependencies, create `.env.local` and `triage.local.yaml`, and install hooks.
 2. Add each Slack workspace's tokens. From the signed-in macOS desktop app, `task setup:slack -- acme` extracts the stealth `xoxc`/`xoxd` tokens into `.env.local` (`acme` sets the `SLACK_ACME_` prefix; pass `--workspace <name>` when several workspaces are signed in). It may ask once for Keychain access. See [token automation](#token-automation) for how it works. Then add your Pushover credentials:
 
     ```dotenv
@@ -33,7 +33,7 @@ Each clone is configured separately:
 
     Any `SLACK_ACME_*` key reaches only that workspace's server, remapped to `SLACK_MCP_*`.
 
-3. Configure sources in `triage.local.yaml`:
+3. Edit `triage.local.yaml` (scaffolded from [`triage.example.yaml`](triage.example.yaml)) to list your sources:
 
     ```yaml
     llm:
@@ -71,14 +71,14 @@ It is a best-effort devtool for macOS and may need updating when Slack changes i
 
 All of these are gitignored or live in `.git`.
 
-| File                | Purpose                                                                                                    |
-| ------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `.env.local`        | Secrets                                                                                                    |
-| `triage.local.yaml` | Sources, LLM, and actions. Deep-merges over [`triage.yaml`](triage.yaml); lists replace.                   |
-| `triage.local.md`   | Extra instructions appended to [`prompts/triage.md`](prompts/triage.md), e.g. who you are and what you own |
-| `.noon.vars`        | `TRIAGE_SCHEDULE` (default `*/15 * * * *`) and `TRIAGE_TIMEOUT` (default `10m`)                            |
-| `.git/tell.yaml`    | Notification routing                                                                                       |
-| `.git/noon.yaml`    | Private Noon jobs                                                                                          |
+| File                | Purpose                                                                                                                                                |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `.env.local`        | Secrets                                                                                                                                                |
+| `triage.local.yaml` | Sources, LLM, and actions. Scaffolded from [`triage.example.yaml`](triage.example.yaml); deep-merges over [`triage.yaml`](triage.yaml), lists replace. |
+| `triage.local.md`   | Extra instructions appended to [`prompts/triage.md`](prompts/triage.md), e.g. who you are and what you own                                             |
+| `.noon.vars`        | `TRIAGE_SCHEDULE` (default `*/15 * * * *`) and `TRIAGE_TIMEOUT` (default `10m`)                                                                        |
+| `.git/tell.yaml`    | Notification routing                                                                                                                                   |
+| `.git/noon.yaml`    | Private Noon jobs                                                                                                                                      |
 
 ## How a run works
 

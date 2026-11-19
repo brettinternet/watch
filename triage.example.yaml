@@ -1,0 +1,12 @@
+# Per-clone triage config. `task init` copies this to the gitignored triage.local.yaml.
+# Deep-merges over triage.yaml (lists replace). See README.
+llm:
+  agent: claude # claude | pi | command
+sources:
+  acme: { kind: slack } # name sets the SLACK_ACME_ env prefix; task setup:slack -- acme
+  # side: { kind: slack, channel_types: dm, mentions_only: true }
+  # prs: { kind: github, repos: [owner/repo] }
+# actions:
+#   investigate:
+#     when: { categories: [incident], min_priority: high }
+#     run: noon -C ~/dev/service run investigate --detach --key "$TRIAGE_KEY" --data -
