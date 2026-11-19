@@ -7,6 +7,10 @@
     "noon": {
       "command": "noon",
       "args": ["mcp"]
+    },
+    "slack": {
+      "command": "task",
+      "args": ["slack:mcp"]
     }
   }
 }

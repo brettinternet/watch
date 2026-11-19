@@ -24,6 +24,17 @@ tasks:
     desc: Collect, summarize, and notify once; `task triage -- --dry-run` previews without side effects
     cmd: "{{.ENV_RUN}} -- bun src/main.ts {{.CLI_ARGS}}"
 
+  slack:mcp:
+    desc: Serve Slack MCP over stdio for agent sessions; `-- <source>` picks a workspace
+    silent: true
+    vars:
+      PRIMARY:
+        sh: dirname "$(git rev-parse --path-format=absolute --git-common-dir)"
+    cmd: >-
+      mise exec -- varlock run --no-redact-stdout --filter "SLACK_*"
+      -p "{{.PRIMARY}}/.env.schema" -p "{{.PRIMARY}}/.env.local"
+      -- bun src/slack-mcp.ts "{{.PRIMARY}}" {{.CLI_ARGS}}
+
   test:
     desc: Run unit tests
     cmd: mise exec bun -- bun test
