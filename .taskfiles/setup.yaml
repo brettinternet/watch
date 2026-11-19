@@ -29,6 +29,10 @@ tasks:
     desc: Install Bun dependencies
     cmd: mise exec bun -- bun install --frozen-lockfile
 
+  slack:
+    desc: "Extract this machine's Slack stealth tokens into .env.local, e.g. task setup:slack -- acme"
+    cmd: python3 scripts/slack-tokens {{.CLI_ARGS}}
+
   tell:
     desc: Route this clone's Tell notifications to Pushover via .git/tell.yaml
     vars:

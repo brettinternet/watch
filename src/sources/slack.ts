@@ -4,7 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { SlackSource } from "../config";
 import { parseCsv } from "../csv";
-import type { Signal } from "../signal";
+import type { CollectCtx, Signal } from "../signal";
 
 const TIMEOUT_MS = 5 * 60_000; // first sync of a large workspace's user/channel cache is slow
 
@@ -42,7 +42,7 @@ export function serverEnv(
 export async function collectSlack(
   name: string,
   source: SlackSource,
-  ctx: { stateDir: string; env: Record<string, string | undefined> },
+  ctx: CollectCtx,
 ): Promise<Signal[]> {
   const cacheDir = join(ctx.stateDir, "slack", name);
   mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
@@ -54,7 +54,15 @@ export async function collectSlack(
   });
   const client = new Client({ name: "work-triage", version: "1" });
   try {
-    await client.connect(transport, { timeout: TIMEOUT_MS });
+    try {
+      await client.connect(transport, { timeout: TIMEOUT_MS });
+    } catch (e) {
+      // The server exits at startup on invalid_auth, so connect just sees the pipe close.
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(
+        `${msg} — if the log shows invalid_auth, the stealth tokens expired; re-run: task setup:slack ${name}`,
+      );
+    }
     const result = await client.callTool(
       {
         name: "conversations_unreads",

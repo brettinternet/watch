@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Extract Slack stealth-mode tokens from the macOS desktop app into .env.local.
+
+Devtool convenience, best-effort: it reads this machine's logged-in Slack session the way
+the slack-mcp-server docs describe doing by hand. The xoxc token comes from the app's Local
+Storage; the xoxd cookie is decrypted with the "Slack Safe Storage" Keychain key (you may get
+a one-time Keychain prompt). The parsing is deliberately simple and may need updating when
+Slack changes storage; re-run it when a token expires.
+
+    scripts/slack-tokens acme                 # one signed-in workspace
+    scripts/slack-tokens acme --workspace acme # pick by team name/url when several are signed in
+
+Writes SLACK_<NAME>_XOXC_TOKEN and SLACK_<NAME>_XOXD_TOKEN to .env.local.
+"""
+
+from __future__ import annotations
+
+import argparse
+import glob
+import hashlib
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+import tempfile
+
+APP_DIR = os.path.expanduser("~/Library/Application Support/Slack")
+XOXC = re.compile(rb"xoxc-\d+-\d+-\d+-[0-9a-f]+")
+XOXD = re.compile(rb"xoxd-[A-Za-z0-9%/+_.=-]+")
+TEAM_NAME = re.compile(rb'"name":"([^"]{1,64})"')
+
+
+def die(msg: str) -> None:
+    sys.exit(f"slack-tokens: {msg}")
+
+
+def read_leveldb(app_dir: str) -> bytes:
+    files = glob.glob(os.path.join(app_dir, "Local Storage/leveldb/*.ldb"))
+    files += glob.glob(os.path.join(app_dir, "Local Storage/leveldb/*.log"))
+    if not files:
+        die(f"no Local Storage under {app_dir}; is the Slack desktop app installed and signed in?")
+    return b"".join(open(f, "rb").read() for f in files)
+
+
+def find_xoxc(blob: str, workspace: str | None) -> str:
+    """Map each token to the team-name text just before it (the URL is compressed away)."""
+    found: dict[str, str] = {}
+    for m in re.finditer(rb"xoxc-\d+-\d+-\d+-[0-9a-f]+", blob.encode("latin-1")):
+        token = m.group().decode()
+        window = blob.encode("latin-1")[max(0, m.start() - 220) : m.start()]
+        names = TEAM_NAME.findall(window)
+        label = names[-1].decode(errors="replace").strip() if names else "?"
+        found.setdefault(token, f"{label} … {window[-80:].decode('latin-1', 'replace')}")
+    if not found:
+        die("no xoxc token in Local Storage; open the workspace in the app, then retry")
+    if workspace:
+        hits = [t for t, label in found.items() if workspace.lower() in label.lower()]
+        if len(hits) != 1:
+            die(f"--workspace {workspace!r} matched {len(hits)} tokens; labels: {[l for _, l in found.items()]}")
+        return hits[0]
+    if len(found) > 1:
+        die(f"{len(found)} workspaces signed in; pass --workspace matching one of: {[l for _, l in found.items()]}")
+    return next(iter(found))
+
+
+def keychain_password() -> bytes:
+    try:
+        out = subprocess.run(
+            ["security", "find-generic-password", "-w", "-s", "Slack Safe Storage"],
+            capture_output=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        die(f"could not read the 'Slack Safe Storage' Keychain key: {e.stderr.decode().strip()}")
+    return out.stdout.strip()
+
+
+def find_xoxd(app_dir: str) -> str:
+    db = next((p for p in ("Network/Cookies", "Cookies") if os.path.exists(os.path.join(app_dir, p))), None)
+    if not db:
+        die("no Cookies database in the Slack app directory")
+    with tempfile.TemporaryDirectory() as tmp:  # copy so a running Slack can't lock it
+        copy = os.path.join(tmp, "Cookies")
+        subprocess.run(["cp", os.path.join(app_dir, db), copy], check=True)
+        con = sqlite3.connect(f"file:{copy}?mode=ro", uri=True)
+        row = con.execute("select encrypted_value from cookies where name='d' and host_key like '%slack.com'").fetchone()
+        con.close()
+    if not row:
+        die("no 'd' cookie for slack.com; sign in to the Slack app, then retry")
+    enc = row[0]
+    if not enc.startswith(b"v10"):
+        die(f"unexpected cookie encryption {enc[:3]!r}; this script handles macOS v10 only")
+    key = hashlib.pbkdf2_hmac("sha1", keychain_password(), b"saltysalt", 1003, dklen=16)
+    dec = subprocess.run(
+        ["openssl", "enc", "-d", "-aes-128-cbc", "-K", key.hex(), "-iv", (b" " * 16).hex(), "-nopad"],
+        input=enc[3:],
+        capture_output=True,
+    )
+    if dec.returncode != 0:
+        die(f"openssl could not decrypt the cookie: {dec.stderr.decode().strip()}")
+    m = XOXD.search(dec.stdout)  # skips any leading domain-hash prefix and trailing padding
+    if not m:
+        die("decrypted cookie did not contain an xoxd value; the Keychain key may be wrong")
+    return m.group().decode()
+
+
+def upsert(env_file: str, values: dict[str, str]) -> None:
+    lines = []
+    if os.path.exists(env_file):
+        lines = [l for l in open(env_file).read().splitlines() if not any(l.startswith(f"{k}=") for k in values)]
+    lines += [f"{k}={v}" for k, v in values.items()]
+    fd = os.open(env_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Extract Slack stealth tokens into .env.local")
+    ap.add_argument("name", help="source name; sets the SLACK_<NAME>_ env prefix")
+    ap.add_argument("--workspace", help="team name/url substring when several workspaces are signed in")
+    ap.add_argument("--app-dir", default=APP_DIR, help="Slack app support directory")
+    ap.add_argument("--env-file", default=".env.local")
+    args = ap.parse_args()
+    if sys.platform != "darwin":
+        die("only the macOS Slack desktop app is supported")
+
+    name = args.name.upper()
+    xoxc = find_xoxc(read_leveldb(args.app_dir).decode("latin-1"), args.workspace)
+    xoxd = find_xoxd(args.app_dir)
+    upsert(args.env_file, {f"SLACK_{name}_XOXC_TOKEN": xoxc, f"SLACK_{name}_XOXD_TOKEN": xoxd})
+    print(f"wrote SLACK_{name}_XOXC_TOKEN (xoxc-…{len(xoxc)}c) and SLACK_{name}_XOXD_TOKEN (xoxd-…{len(xoxd)}c) to {args.env_file}")
+
+
+if __name__ == "__main__":
+    main()

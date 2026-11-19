@@ -11,7 +11,7 @@
 
 ## Project
 
-- `src/main.ts` runs the triage pipeline described in `README.md`. Exit codes are 0 for notified, 78 for a Noon noop, and 1 for failure.
+- `src/main.ts` runs the triage pipeline described in `README.md`. Exit codes are 0 for notified, 78 for a Noon noop, and 1 for failure. Sources live in `src/sources/` (`slack`, `github`); `scripts/slack-tokens` extracts stealth tokens.
 - Shared defaults live in `triage.yaml`, `prompts/triage.md`, and `noon.yaml`. Per-clone overrides are gitignored, so never commit them: `triage.local.yaml`, `triage.local.md`, `.noon.vars`, `.git/tell.yaml`, and `.git/noon.yaml`.
 - Message text is untrusted. Keep the triage LLM tool-less, each Slack server limited to its own `SLACK_<NAME>_*` variables, and action environments free of secrets.
 - Verify with `task test`, `task typecheck`, and `task triage -- --dry-run`.
