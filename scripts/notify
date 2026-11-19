@@ -1,0 +1,10 @@
+#!/bin/sh
+# Usage: scripts/notify <title> <message> [tell notify options...]
+# Sends a Tell notification from a Noon hook or job. Pushover credentials come from .env.local
+# through Varlock; Tell's timeout stays well inside Noon's 30-second hook budget.
+set -eu
+root=${NOON_PROJECT:-$(git rev-parse --show-toplevel)}
+title=$1 message=$2
+shift 2
+exec mise exec -- varlock run -p "$root/.env.schema" -p "$root/.env.local" -- \
+  tell -C "$root" --timeout 10s notify --title "$title" "$@" -- "$message" </dev/null

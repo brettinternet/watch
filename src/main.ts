@@ -119,7 +119,7 @@ async function main(dryRun: boolean): Promise<number> {
       try {
         result = await withContext(root, cfg, ctx, fresh, result);
       } catch (e) {
-        console.error(`context skipped: ${message(e)}`); // the first pass still stands
+        failures.push(`context: ${message(e)}`); // the first pass still stands
       }
     } catch (e) {
       failures.push(`llm: ${message(e)}`);

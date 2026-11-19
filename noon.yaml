@@ -24,3 +24,4 @@ jobs:
     overlap: skip
     noop_exit_code: 78
     run: [./scripts/update]
+    on_failure: [./scripts/on-failure]

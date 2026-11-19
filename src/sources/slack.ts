@@ -32,7 +32,8 @@ export function serverEnv(
   }
   return {
     ...out,
-    SLACK_MCP_ENABLED_TOOLS: "conversations_unreads,conversations_replies,conversations_history",
+    SLACK_MCP_ENABLED_TOOLS:
+      "conversations_unreads,conversations_replies,conversations_history,conversations_search_messages",
     SLACK_MCP_USERS_CACHE: join(cacheDir, "users_cache.json"),
     SLACK_MCP_CHANNELS_CACHE: join(cacheDir, "channels_cache_v2.json"),
     SLACK_MCP_LOG_LEVEL: out.SLACK_MCP_LOG_LEVEL ?? "warn",
@@ -82,24 +83,65 @@ async function withServer<T>(
   }
 }
 
+// Search indexes with a delay. Taking only settled results keeps the mentions cursor from
+// skipping a reply that is indexed after a newer one.
+const SEARCH_LAG_S = 120;
+
 export function collectSlack(
   name: string,
   source: SlackSource,
   ctx: CollectCtx,
 ): Promise<Signal[]> {
   return withServer(name, ctx, async (call, cacheDir) => {
-    const rows = await call("conversations_unreads", {
-      include_messages: true,
-      channel_types: source.channel_types,
-      mentions_only: source.mentions_only,
-      max_channels: source.max_channels,
-      max_messages_per_channel: source.max_messages_per_channel,
-    });
-    const link = source.url
-      ? linker(source.url, join(cacheDir, "channels_cache_v2.json"))
-      : undefined;
-    return toSignals(name, rows, source.exclude_channels, link);
+    const channels = readChannels(cacheDir);
+    const unreads = toSignals(
+      name,
+      await call("conversations_unreads", {
+        include_messages: true,
+        channel_types: source.channel_types,
+        mentions_only: source.mentions_only,
+        max_channels: source.max_channels,
+        max_messages_per_channel: source.max_messages_per_channel,
+      }),
+      source.exclude_channels,
+      source.url ? linker(source.url, channels) : undefined,
+    );
+    if (!source.thread_mentions) return unreads;
+    const seen = new Set(unreads.map((s) => s.key));
+    const mentions = await threadMentions(name, call, ctx, channels, source.exclude_channels);
+    return [...unreads, ...mentions.filter((s) => !seen.has(s.key))];
   });
+}
+
+/**
+ * Thread replies that mention me. Unreads only cover top-level messages, so these come from
+ * search, on their own cursor stream because search lags behind the unread scan.
+ */
+async function threadMentions(
+  name: string,
+  call: Call,
+  ctx: CollectCtx,
+  channels: Channel[],
+  exclude: string[],
+): Promise<Signal[]> {
+  const [mine] = await call("conversations_search_messages", { search_query: "from:me", limit: 1 });
+  if (!mine?.UserID) return []; // search finds me by my own messages
+  // Slack's after: excludes the given day, so start a day early; unseen() applies max_age.
+  const after = new Date(Date.parse(ctx.since) - 864e5).toISOString().slice(0, 10);
+  const rows = await call("conversations_search_messages", {
+    search_query: `<@${mine.UserID}>`,
+    filter_threads_only: true,
+    filter_date_after: after,
+    limit: 100,
+  });
+  const names = new Map(channels.map((c) => [c.id, c.name]));
+  const settled = Date.now() / 1000 - SEARCH_LAG_S;
+  const replies = rows.flatMap((r) => {
+    if (!r.ThreadTs || r.ThreadTs === r.MsgID || Number(r.MsgID) > settled) return [];
+    const id = /^(\S+) \(/.exec(r.Channel ?? "")?.[1] ?? r.Channel ?? ""; // "C123 (#name)"
+    return [{ ...r, Channel: names.get(id) ?? id }]; // match the unread scan's channel names
+  });
+  return toSignals(name, replies, exclude).map((s) => ({ ...s, stream: "thread-mentions" }));
 }
 
 /** Each signal's thread plus the channel's recent messages, so triage can understand it. */
@@ -123,15 +165,21 @@ export function slackContext(
   });
 }
 
+type Channel = { id: string; name: string };
+
+/** The server's channel cache, written on its first sync. */
+function readChannels(cacheDir: string): Channel[] {
+  const path = join(cacheDir, "channels_cache_v2.json");
+  return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as Channel[]) : [];
+}
+
 type Link = (channel: string, ts: string, thread?: string) => string | undefined;
 
 /**
  * Unread rows carry channel names, not ids, so map names to ids through the server's channel
  * cache. Thread replies need thread_ts and cid to open in their thread.
  */
-function linker(base: string, cachePath: string): Link | undefined {
-  if (!existsSync(cachePath)) return undefined;
-  const channels = JSON.parse(readFileSync(cachePath, "utf8")) as { id: string; name: string }[];
+function linker(base: string, channels: Channel[]): Link {
   const ids = new Map(channels.map((c) => [c.name, c.id]));
   return (channel, ts, thread) => {
     // The server reports an uncached channel by its id.
@@ -156,7 +204,7 @@ export function toSignals(
     .filter((r) => r.MsgID && r.Channel && !exclude.includes(r.Channel))
     .map((r) => {
       const thread = r.ThreadTs && r.ThreadTs !== r.MsgID ? r.ThreadTs : undefined;
-      const url = link?.(r.Channel!, r.MsgID!, thread);
+      const url = r.Permalink || link?.(r.Channel!, r.MsgID!, thread); // search rows carry one
       return {
         key: `${name}:${r.Channel}:${r.MsgID}`,
         source: name,

@@ -47,16 +47,16 @@ Each clone is configured separately:
 
 4. Run `task setup:tell` to route this clone's notifications to Pushover in `.git/tell.yaml`.
 5. Run `task triage -- --dry-run` to preview a run without notifying, running actions, or recording anything. The first run against a large workspace is slow while the user and channel caches sync.
-6. Run `noon enable` to schedule triage and the hourly `update` job, which fast-forwards this checkout and installs dependencies. The Noon service's `PATH` must include `mise`, the agent CLI, and `gh`.
+6. Run `noon enable` to schedule triage and the hourly `update` job, which fast-forwards this checkout, installs dependencies, and notifies when `noon.yaml` changed and needs `noon enable` again. Both jobs notify once when they start failing. The Noon service's `PATH` must include `mise`, the agent CLI, and `gh`.
 
 ## Sources
 
 Each source has a name (the key) and a `kind`. The name labels its signals and, for Slack, is the `SLACK_<NAME>_` env prefix, so keep it to lowercase letters and digits.
 
-| Kind     | Fields                                                                                                                                                                                      | Produces                              |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| `slack`  | `url` (workspace URL, enables message links), `channel_types` (`all`/`dm`/`group_dm`/`partner`/`internal`), `mentions_only`, `max_channels`, `max_messages_per_channel`, `exclude_channels` | unread messages                       |
-| `github` | `repos: [owner/repo, …]`, `author` (default `@me`)                                                                                                                                          | PRs merged within `max_age`, via `gh` |
+| Kind     | Fields                                                                                                                                                                                                                        | Produces                                         |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `slack`  | `url` (workspace URL, enables message links), `channel_types` (`all`/`dm`/`group_dm`/`partner`/`internal`), `mentions_only`, `thread_mentions` (default true), `max_channels`, `max_messages_per_channel`, `exclude_channels` | unread messages, thread replies that mention you |
+| `github` | `repos: [owner/repo, …]`, `author` (default `@me`)                                                                                                                                                                            | PRs merged within `max_age`, via `gh`            |
 
 ## Token automation
 
@@ -82,13 +82,13 @@ All of these are gitignored or live in `.git`.
 
 ## How a run works
 
-1. Collect unread messages from every source. Messages stay unread in Slack.
+1. Collect unread messages from every source, plus Slack thread replies that mention you, which the unread scan misses. Messages stay unread in Slack.
 2. Drop messages already handled, using per-channel cursors in `.state/cursors.json`, and messages older than `max_age`.
 3. One LLM call with no tools groups messages into items with a priority and category. If it flags up to three items at or above `notify.min_priority` as needing context, the collector fetches their Slack threads and recent channel messages read-only, and a second call triages again with them. The overall priority is the highest item's priority.
 4. If it reaches `notify.min_priority`, run `tell notify` with `notify.args[priority]`. Emergency priority repeats every `retry` until acknowledged or `expire`.
 5. Run matching actions, then advance the cursors.
 
-A run exits 0 after notifying, 78 (a Noon noop) when nothing reached the threshold, and 1 on any failure. A failed notification leaves its messages for the next run. If the LLM fails, a fallback lists counts per channel, with DMs at normal priority. The run still exits 1, and Noon's `on_failure` hook notifies once when a streak of failures starts.
+A run exits 0 after notifying, 78 (a Noon noop) when nothing reached the threshold, and 1 on any failure. A failed notification leaves its messages for the next run. If the LLM fails, a fallback lists counts per channel, with DMs at normal priority. A failed context fetch keeps the first pass. Either way the run still exits 1, and Noon's `on_failure` hook notifies once when a streak of failures starts.
 
 ## Actions
 

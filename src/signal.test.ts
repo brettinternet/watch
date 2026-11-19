@@ -31,3 +31,10 @@ test("each message is handed to exactly one run", () => {
   expect(unseen(next, cursors, "0").map((s) => s.key)).toEqual(["acme:#a:1700000000.000300"]);
   expect(unseen([sig("#c", "1600000000.000000")], cursors, "1700000000")).toEqual([]);
 });
+
+test("a thread mention found late by search is not hidden by its channel's cursor", () => {
+  const cursors = advance({}, [sig("#a", "1700000000.000300")]);
+  const reply = { ...sig("#a", "1700000000.000200"), stream: "thread-mentions" };
+  expect(unseen([reply], cursors, "0")).toEqual([reply]);
+  expect(unseen([reply], advance(cursors, [reply]), "0")).toEqual([]);
+});

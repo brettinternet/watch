@@ -22,6 +22,7 @@ const SlackSource = z
     url: z.url().optional(), // workspace URL, e.g. https://acme.slack.com; enables message links
     channel_types: z.enum(["all", "dm", "group_dm", "partner", "internal"]).default("all"),
     mentions_only: z.boolean().default(false),
+    thread_mentions: z.boolean().default(true), // also collect thread replies that mention me
     max_channels: z.number().int().positive().default(30),
     max_messages_per_channel: z.number().int().positive().default(10),
     exclude_channels: z.array(z.string()).default([]),
