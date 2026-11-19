@@ -2,17 +2,18 @@ import { expect, test } from "bun:test";
 import { parseOutput, type Triage, triageSchema } from "./llm";
 
 const schema = triageSchema(["incident", "fyi"]);
-const t: Triage = {
+const t = {
   title: "API down",
-  summary: "#ops: checkout returns 500s",
+  summary: ["#ops: checkout returns 500s", "@ana: needs review → approve PR #42"],
   items: [{ ids: ["m1"], priority: "high", category: "incident", reason: "Outage" }],
-};
+} satisfies Omit<Triage, "summary"> & { summary: string[] };
+const parsed: Triage = { ...t, summary: t.summary.map((l) => `• ${l}`).join("\n") };
 
 test("reads structured output from each agent's format", () => {
-  expect(parseOutput("claude", JSON.stringify({ structured_output: t }), schema)).toEqual(t);
+  expect(parseOutput("claude", JSON.stringify({ structured_output: t }), schema)).toEqual(parsed);
   const fenced = { result: `\`\`\`json\n${JSON.stringify(t)}\n\`\`\`` };
-  expect(parseOutput("claude", JSON.stringify(fenced), schema)).toEqual(t);
-  expect(parseOutput("pi", `Here is the triage:\n${JSON.stringify(t)}\n`, schema)).toEqual(t);
+  expect(parseOutput("claude", JSON.stringify(fenced), schema)).toEqual(parsed);
+  expect(parseOutput("pi", `Here is the triage:\n${JSON.stringify(t)}\n`, schema)).toEqual(parsed);
 });
 
 test("rejects agent errors and categories outside the config", () => {

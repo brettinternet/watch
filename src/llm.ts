@@ -11,10 +11,10 @@ export function triageSchema(categories: string[]) {
   return z.object({
     title: z.string().min(1).describe("Headline, at most 60 characters"),
     summary: z
-      .string()
+      .array(z.string().min(1))
       .min(1)
       .describe(
-        "Terse plain-text lines, most important first, each ending with a next action when clear, at most 400 characters",
+        "One terse plain-text line per item, most important first, each ending with a next action when clear, at most 400 characters total",
       ),
     items: z.array(
       z.object({
@@ -30,7 +30,9 @@ export function triageSchema(categories: string[]) {
     ),
   });
 }
-export type Triage = z.infer<ReturnType<typeof triageSchema>>;
+type TriageSchema = ReturnType<typeof triageSchema>;
+/** Summary lines are joined as bullets so wrapped lines stay distinguishable on a phone. */
+export type Triage = Omit<z.infer<TriageSchema>, "summary"> & { summary: string };
 
 /** Agents run with no tools: message text is untrusted and must not be able to act. */
 function argv(llm: Config["llm"], jsonSchema: object): string[] {
@@ -102,7 +104,7 @@ export function extractJson(text: string): unknown {
 export function parseOutput(
   agent: Config["llm"]["agent"],
   stdout: string,
-  schema: z.ZodType<Triage>,
+  schema: TriageSchema,
 ): Triage {
   let value: unknown;
   if (agent === "claude") {
@@ -115,7 +117,8 @@ export function parseOutput(
     value = out.structured_output ?? extractJson(out.result ?? "");
   } else value = extractJson(stdout);
   const t = schema.parse(value);
-  return { ...t, title: clip(t.title, 100), summary: clip(t.summary, 900) };
+  const lines = t.summary.length > 1 ? t.summary.map((l) => `• ${l}`) : t.summary;
+  return { ...t, title: clip(t.title, 100), summary: clip(lines.join("\n"), 900) };
 }
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
