@@ -122,4 +122,4 @@ Message text is untrusted input. Give that agent read-only tools.
 
 ## Development
 
-`task test`, `task typecheck`, and `task triage -- --dry-run`. To add a source kind, add its schema to `src/config.ts`, a collector in `src/sources/` returning `Signal[]`, and a case in `collect()` in `src/main.ts`.
+`task test`, `task typecheck`, and `task triage -- --dry-run`. `task doctor` checks setup, credentials (including a live Slack `auth.test`), and Noon and Tell readiness without side effects. To add a source kind, add its schema to `src/config.ts`, a collector in `src/sources/` returning `Signal[]`, and a case in `collect()` in `src/main.ts`.

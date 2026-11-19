@@ -24,6 +24,13 @@ tasks:
     desc: Collect, summarize, and notify once; `task triage -- --dry-run` previews without side effects
     cmd: "{{.ENV_RUN}} -- bun src/main.ts {{.CLI_ARGS}}"
 
+  doctor:
+    desc: Check setup, credentials, and scheduler state without side effects
+    cmd: "{{.ENV_RUN}} -- bun src/doctor.ts"
+    preconditions:
+      - sh: test -f .env.local
+        msg: .env.local is missing; run task init
+
   slack:mcp:
     desc: Serve Slack MCP over stdio for agent sessions; `-- <source>` picks a workspace
     silent: true
