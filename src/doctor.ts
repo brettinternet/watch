@@ -110,10 +110,6 @@ const missing = tools.filter((t) => !Bun.which(t));
 if (missing.length) report("fail", "tools", `not on PATH: ${missing.join(", ")}`);
 else report("ok", "tools", tools.join(", "));
 
-const unset = ["PUSHOVER_TOKEN", "PUSHOVER_USER"].filter((k) => !process.env[k]);
-if (unset.length) report("fail", "pushover", `set ${unset.join(", ")} in .env.local`);
-else report("ok", "pushover", "credentials set");
-
 await Promise.all(
   Object.entries(cfg?.sources ?? {}).flatMap(([name, s]) =>
     s.kind === "slack" ? [slackAuth(name)] : [],
