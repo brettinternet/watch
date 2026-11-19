@@ -1,0 +1,27 @@
+# Secrets and per-clone overrides
+.env
+.env.local
+.env.*.local
+*.local.yaml
+*.local.md
+.noon.vars
+
+# Runtime state (dedupe cursors, Slack caches)
+/.state/
+
+# Tools
+/Taskfile.yaml
+/Taskfile.yml
+mise.local.toml
+mise.*.local.toml
+node_modules
+
+# Git worktrees
+/.worktrees/
+
+# AI
+.claude/settings.local.json
+.opencode/
+
+# System
+.DS_Store

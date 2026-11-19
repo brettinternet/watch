@@ -1,0 +1,47 @@
+---
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: "3"
+
+tasks:
+  init:
+    desc: Install tools, create local files, and install hooks
+    cmds:
+      - task: mise
+      - task: worktree
+
+  mise:
+    desc: Install workstation dependencies
+    cmds:
+      - mise trust -q -a
+      - mise install -q
+    preconditions:
+      - sh: command -v mise
+        msg: Mise is not installed
+
+  worktree:
+    desc: Prepare a checkout without enabling scheduled jobs
+    cmds:
+      - task: env:init
+      - task: lefthook
+
+  env:init:
+    desc: Create an empty private .env.local if missing, then validate
+    cmds:
+      - test -f .env.local || (touch .env.local && chmod 600 .env.local)
+      - task: env:check
+
+  env:check:
+    desc: Validate and resolve the Varlock environment
+    cmd: '{{.ENV_RUN}} -- true && echo "Environment valid"'
+
+  env:encrypt:
+    desc: Encrypt one value for use in .env.local
+    cmd: mise exec varlock -- varlock encrypt
+
+  env:run:
+    desc: Run a command with the Varlock environment
+    cmd: "{{.ENV_RUN}} -- {{.CLI_ARGS}}"
+
+  lefthook:
+    desc: Install Lefthook
+    cmd: mise exec lefthook -- lefthook install

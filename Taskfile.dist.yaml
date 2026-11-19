@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: "3"
+
+vars:
+  ENV_RUN: >-
+    mise exec varlock -- varlock run
+    -p "{{.ROOT_DIR}}/.env.schema" -p "{{.ROOT_DIR}}/.env.local"
+
+includes:
+  setup: .taskfiles/setup.yaml
+
+tasks:
+  default:
+    silent: true
+    cmd: task -l
+
+  init:
+    desc: Install dependencies and setup environment
+    aliases: [setup]
+    cmds:
+      - task: setup:init
+
+  check:
+    desc: Run all project checks
+    cmds:
+      - mise exec prettier -- prettier --check .
+
+  check:staged:
+    desc: Run checks only for staged files
+    aliases: [check-staged]
+    cmd: mise exec lefthook -- lefthook run pre-commit
+
+  fix:
+    desc: Fix all project files
+    cmds:
+      - mise exec prettier -- prettier --write .

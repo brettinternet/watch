@@ -1,0 +1,8 @@
+# Ordered, blocking setup: never hand an agent a half-prepared checkout.
+# Worktrees never inherit .env.local secrets or .state; scheduled jobs stay in
+# the primary checkout.
+[[pre-start]]
+tools = "mise trust && mise install"
+
+[[pre-start]]
+setup = "mise exec -- task setup:worktree"

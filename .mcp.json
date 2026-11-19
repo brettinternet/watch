@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "tell": {
+      "command": "tell",
+      "args": ["mcp"]
+    },
+    "noon": {
+      "command": "noon",
+      "args": ["mcp"]
+    }
+  }
+}
