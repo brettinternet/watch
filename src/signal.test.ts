@@ -1,0 +1,33 @@
+import { expect, test } from "bun:test";
+import { advance, compareTs, type Signal, unseen } from "./signal";
+
+const sig = (channel: string, ts: string): Signal => ({
+  key: `acme:${channel}:${ts}`,
+  source: "acme",
+  kind: "slack",
+  channel,
+  ts,
+  time: "",
+  author: "",
+  text: "",
+});
+
+test("compareTs orders decimal timestamps exactly", () => {
+  expect(compareTs("999999999.9", "1000000000.0")).toBeLessThan(0);
+  expect(compareTs("1700000000.5", "1700000000.40")).toBeGreaterThan(0);
+  expect(compareTs("1700000000.000100", "1700000000.0001")).toBe(0);
+});
+
+test("each message is handed to exactly one run", () => {
+  const first = [
+    sig("#a", "1700000000.000100"),
+    sig("#a", "1700000000.000200"),
+    sig("#b", "1700000000.000050"),
+  ];
+  const cursors = advance({}, unseen(first, {}, "0"));
+
+  // Slack still reports the old unreads next time, plus one new message.
+  const next = [...first, sig("#a", "1700000000.000300")];
+  expect(unseen(next, cursors, "0").map((s) => s.key)).toEqual(["acme:#a:1700000000.000300"]);
+  expect(unseen([sig("#c", "1600000000.000000")], cursors, "1700000000")).toEqual([]);
+});

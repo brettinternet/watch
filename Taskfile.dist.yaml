@@ -20,10 +20,24 @@ tasks:
     cmds:
       - task: setup:init
 
+  triage:
+    desc: Collect, summarize, and notify once; `task triage -- --dry-run` previews without side effects
+    cmd: "{{.ENV_RUN}} -- bun src/main.ts {{.CLI_ARGS}}"
+
+  test:
+    desc: Run unit tests
+    cmd: mise exec bun -- bun test
+
+  typecheck:
+    desc: Typecheck TypeScript
+    cmd: mise exec bun -- bun x tsc
+
   check:
     desc: Run all project checks
     cmds:
       - mise exec prettier -- prettier --check .
+      - task: typecheck
+      - task: test
 
   check:staged:
     desc: Run checks only for staged files

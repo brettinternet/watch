@@ -1,0 +1,22 @@
+# Shared triage defaults. Each clone adds sources, LLM choice, and actions in the
+# gitignored triage.local.yaml, which deep-merges over this file (lists replace).
+version: 1
+
+llm:
+  agent: claude # claude | pi | command
+
+categories:
+  incident: Production outage, alert, customer-facing breakage, or security issue
+  request: Someone is asking me directly for an answer, decision, or action
+  review: A code review, approval, or document is waiting on me
+  fyi: Useful context with no action needed from me
+  noise: Bots, chatter, and announcements I can skip
+
+notify:
+  min_priority: normal
+  # Extra tell notify arguments per overall priority.
+  args:
+    low: [--pushover-priority, low]
+    normal: [--pushover-priority, normal]
+    high: [--pushover-priority, high]
+    emergency: [--pushover-priority, emergency]

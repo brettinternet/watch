@@ -21,8 +21,34 @@ tasks:
   worktree:
     desc: Prepare a checkout without enabling scheduled jobs
     cmds:
+      - task: deps
       - task: env:init
       - task: lefthook
+
+  deps:
+    desc: Install Bun dependencies
+    cmd: mise exec bun -- bun install --frozen-lockfile
+
+  tell:
+    desc: Route this clone's Tell notifications to Pushover via .git/tell.yaml
+    vars:
+      FILE:
+        sh: echo "$(git rev-parse --path-format=absolute --git-common-dir)/tell.yaml"
+    status:
+      - test -f "{{.FILE}}"
+    cmds:
+      - |
+        cat >> "{{.FILE}}" <<'EOF'
+        # Personal Tell routing for this clone (worktrees share it). Credentials come from .env.local.
+        notify:
+          via: pushover
+        pushover:
+          token_env: PUSHOVER_TOKEN
+          user_env: PUSHOVER_USER
+          retry: 2m # emergency priority repeats until acknowledged or expired
+          expire: 1h
+        EOF
+      - echo "Wrote {{.FILE}}"
 
   env:init:
     desc: Create an empty private .env.local if missing, then validate
