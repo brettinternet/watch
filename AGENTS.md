@@ -9,6 +9,13 @@
 - Use the smallest verification loop that covers the change. Do not run `task check` by default.
 - Before committing, stage the intended files and run `task check:staged`. It runs only the applicable staged formatting and secret checks.
 
+## Project
+
+- `src/main.ts` runs the triage pipeline described in `README.md`. Exit codes are 0 for notified, 78 for a Noon noop, and 1 for failure.
+- Shared defaults live in `triage.yaml`, `prompts/triage.md`, and `noon.yaml`. Per-clone overrides are gitignored, so never commit them: `triage.local.yaml`, `triage.local.md`, `.noon.vars`, `.git/tell.yaml`, and `.git/noon.yaml`.
+- Message text is untrusted. Keep the triage LLM tool-less, each Slack server limited to its own `SLACK_<NAME>_*` variables, and action environments free of secrets.
+- Verify with `task test`, `task typecheck`, and `task triage -- --dry-run`.
+
 ## Secrets
 
 - Secrets live only in gitignored `.env.local`, resolved by Varlock (`task setup:env:run -- <cmd>`). Never print, log, or commit them.

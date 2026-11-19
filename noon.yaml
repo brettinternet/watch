@@ -1,0 +1,15 @@
+version: 1
+vars_file: .noon.vars # per-clone schedule/timeout overrides; gitignored
+
+jobs:
+  triage:
+    description: >
+      Summarize new unread messages from configured sources and notify by priority.
+      Noop (78) means nothing new or nothing at or above notify.min_priority.
+    schedule: "${TRIAGE_SCHEDULE:-*/15 * * * *}"
+    timeout: "${TRIAGE_TIMEOUT:-10m}"
+    missed: skip
+    overlap: skip
+    noop_exit_code: 78
+    run: [mise, exec, --, task, --exit-code, triage] # pass 78 through, not task's 201
+    on_failure: [./scripts/on-failure]

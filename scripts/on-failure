@@ -1,0 +1,14 @@
+#!/bin/sh
+# Noon on_failure hook: notify once when triage starts failing, e.g. an expired Slack token.
+# Noon's NOON_PREVIOUS_STATUS ignores noops, so later failures in a streak stay quiet.
+case "${NOON_PREVIOUS_STATUS-}" in failed | timed_out) exit 0 ;; esac
+
+# Never read hook stdin or NOON_LOG_FILE: logs may quote message text.
+root=${NOON_PROJECT:-$(pwd)}
+message="Status: ${NOON_STATUS-unknown}
+Run: noon logs ${NOON_RUN_ID-} in $root"
+
+# Pushover credentials come from .env.local through Varlock. Keep Tell's timeout well inside
+# Noon's 30-second hook budget.
+exec mise exec -- varlock run -p "$root/.env.schema" -p "$root/.env.local" -- \
+  tell -C "$root" --timeout 10s notify --title "Triage failing" --type failure -- "$message" </dev/null
