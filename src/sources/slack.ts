@@ -52,7 +52,7 @@ export async function collectSlack(
     env: serverEnv(name, ctx.env, cacheDir),
     stderr: "inherit",
   });
-  const client = new Client({ name: "work-triage", version: "1" });
+  const client = new Client({ name: "watch-triage", version: "1" });
   try {
     try {
       await client.connect(transport, { timeout: TIMEOUT_MS });
