@@ -1,4 +1,7 @@
+import { hostname } from "node:os";
 import type { Config, Priority } from "./config";
+
+const HOST = hostname().split(".")[0];
 
 const TYPE: Record<Priority, string> = {
   none: "info",
@@ -23,7 +26,7 @@ export function tellArgv(
     "--json",
     "notify",
     "--title",
-    title,
+    `[${HOST}] ${title}`,
     "--type",
     TYPE[p],
     ...(url ? ["--url", url] : []),

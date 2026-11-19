@@ -7,4 +7,4 @@ root=${NOON_PROJECT:-$(git rev-parse --show-toplevel)}
 title=$1 message=$2
 shift 2
 exec mise exec -- varlock run -p "$root/.env.schema" -p "$root/.env.local" -- \
-  tell -C "$root" --timeout 10s notify --title "$title" "$@" -- "$message" </dev/null
+  tell -C "$root" --timeout 10s notify --title "[$(hostname -s)] $title" "$@" -- "$message" </dev/null
