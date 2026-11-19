@@ -14,6 +14,7 @@ export function tellArgv(
   p: Priority,
   title: string,
   body: string,
+  url?: string,
 ): string[] {
   return [
     "tell",
@@ -25,6 +26,7 @@ export function tellArgv(
     title,
     "--type",
     TYPE[p],
+    ...(url ? ["--url", url] : []),
     ...(cfg.args[p] ?? []),
     "--",
     body,

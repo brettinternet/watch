@@ -19,6 +19,7 @@ const Argv = z.array(z.string().min(1)).min(1);
 const SlackSource = z
   .object({
     kind: z.literal("slack"),
+    url: z.url().optional(), // workspace URL, e.g. https://acme.slack.com; enables message links
     channel_types: z.enum(["all", "dm", "group_dm", "partner", "internal"]).default("all"),
     mentions_only: z.boolean().default(false),
     max_channels: z.number().int().positive().default(30),

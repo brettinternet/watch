@@ -20,6 +20,7 @@ test("a merged PR keeps a stable key and an exact merge timestamp", () => {
     time: "2026-11-19T16:57:30.500Z",
     author: "sam",
     text: "Fix checkout retry — https://github.com/acme/api/pull/812",
+    url: "https://github.com/acme/api/pull/812",
   });
 });
 

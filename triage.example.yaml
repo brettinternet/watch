@@ -3,7 +3,7 @@
 llm:
   agent: claude # claude | pi | command
 sources:
-  acme: { kind: slack } # name sets the SLACK_ACME_ env prefix; task setup:slack -- acme
+  acme: { kind: slack, url: https://acme.slack.com } # name sets the SLACK_ACME_ env prefix; task setup:slack -- acme
   # side: { kind: slack, channel_types: dm, mentions_only: true }
   # prs: { kind: github, repos: [owner/repo] }
 # actions:

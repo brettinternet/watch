@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -81,28 +81,60 @@ export async function collectSlack(
       .flatMap((c) => (c.type === "text" && c.text ? [c.text] : []))
       .join("");
     if (result.isError) throw new Error(`conversations_unreads: ${text}`);
-    return toSignals(name, parseCsv(text), source.exclude_channels);
+    const link = source.url
+      ? linker(source.url, join(cacheDir, "channels_cache_v2.json"))
+      : undefined;
+    return toSignals(name, parseCsv(text), source.exclude_channels, link);
   } finally {
     await client.close();
   }
+}
+
+type Link = (channel: string, ts: string, thread?: string) => string | undefined;
+
+/**
+ * Unread rows carry channel names, not ids, so map names to ids through the server's channel
+ * cache. Thread replies need thread_ts and cid to open in their thread.
+ */
+function linker(base: string, cachePath: string): Link | undefined {
+  if (!existsSync(cachePath)) return undefined;
+  const channels = JSON.parse(readFileSync(cachePath, "utf8")) as { id: string; name: string }[];
+  const ids = new Map(channels.map((c) => [c.name, c.id]));
+  return (channel, ts, thread) => {
+    // The server reports an uncached channel by its id.
+    const id = ids.get(channel) ?? (/^[CDG][A-Z0-9]{6,}$/.test(channel) ? channel : undefined);
+    if (!id) return undefined;
+    const url = new URL(`archives/${id}/p${ts.replace(".", "")}`, base.replace(/\/*$/, "/"));
+    if (thread) {
+      url.searchParams.set("thread_ts", thread);
+      url.searchParams.set("cid", id);
+    }
+    return url.href;
+  };
 }
 
 export function toSignals(
   name: string,
   rows: Record<string, string>[],
   exclude: string[],
+  link?: Link,
 ): Signal[] {
   return rows
     .filter((r) => r.MsgID && r.Channel && !exclude.includes(r.Channel))
-    .map((r) => ({
-      key: `${name}:${r.Channel}:${r.MsgID}`,
-      source: name,
-      kind: "slack",
-      channel: r.Channel!,
-      ts: r.MsgID!,
-      time: r.Time ?? "",
-      author: r.RealName || r.UserName || r.BotName || r.UserID || "unknown",
-      text: r.Text ?? "",
-      ...(r.ThreadTs && r.ThreadTs !== r.MsgID ? { thread: r.ThreadTs } : {}),
-    }));
+    .map((r) => {
+      const thread = r.ThreadTs && r.ThreadTs !== r.MsgID ? r.ThreadTs : undefined;
+      const url = link?.(r.Channel!, r.MsgID!, thread);
+      return {
+        key: `${name}:${r.Channel}:${r.MsgID}`,
+        source: name,
+        kind: "slack",
+        channel: r.Channel!,
+        ts: r.MsgID!,
+        time: r.Time ?? "",
+        author: r.RealName || r.UserName || r.BotName || r.UserID || "unknown",
+        text: r.Text ?? "",
+        ...(thread ? { thread } : {}),
+        ...(url ? { url } : {}),
+      };
+    });
 }

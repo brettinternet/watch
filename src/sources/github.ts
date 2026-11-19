@@ -46,5 +46,6 @@ export function prsToSignals(name: string, repo: string, prs: Pr[]): Signal[] {
       time: p.mergedAt,
       author: p.author?.login ?? "unknown",
       text: `${p.title} — ${p.url}`,
+      url: p.url,
     }));
 }

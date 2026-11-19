@@ -12,6 +12,8 @@ export type Signal = {
   author: string;
   text: string;
   thread?: string;
+  /** Link to open the signal at its source. */
+  url?: string;
 };
 
 /** source → channel → highest ts already handled. */

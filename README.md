@@ -53,10 +53,10 @@ Each clone is configured separately:
 
 Each source has a name (the key) and a `kind`. The name labels its signals and, for Slack, is the `SLACK_<NAME>_` env prefix, so keep it to lowercase letters and digits.
 
-| Kind     | Fields                                                                                                                                        | Produces                              |
-| -------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| `slack`  | `channel_types` (`all`/`dm`/`group_dm`/`partner`/`internal`), `mentions_only`, `max_channels`, `max_messages_per_channel`, `exclude_channels` | unread messages                       |
-| `github` | `repos: [owner/repo, …]`, `author` (default `@me`)                                                                                            | PRs merged within `max_age`, via `gh` |
+| Kind     | Fields                                                                                                                                                                                      | Produces                              |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| `slack`  | `url` (workspace URL, enables message links), `channel_types` (`all`/`dm`/`group_dm`/`partner`/`internal`), `mentions_only`, `max_channels`, `max_messages_per_channel`, `exclude_channels` | unread messages                       |
+| `github` | `repos: [owner/repo, …]`, `author` (default `@me`)                                                                                                                                          | PRs merged within `max_age`, via `gh` |
 
 ## Token automation
 

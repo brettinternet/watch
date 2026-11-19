@@ -78,7 +78,9 @@ async function main(dryRun: boolean): Promise<number> {
       console.log(`- ${i.priority} ${i.category} (${i.signals.length}): ${i.reason}`);
 
     if (rank(priority) >= rank(cfg.notify.min_priority)) {
-      const argv = tellArgv(root, cfg.notify, priority, result.title, result.summary);
+      // Link the newest linkable message of the first top-priority item.
+      const url = items.find((i) => i.priority === priority)?.signals.findLast((s) => s.url)?.url;
+      const argv = tellArgv(root, cfg.notify, priority, result.title, result.summary, url);
       if (dryRun) console.log(`\nwould run: ${argv.slice(0, -1).join(" ")} <summary>`);
       else {
         const { delivered, detail } = await notify(argv);
