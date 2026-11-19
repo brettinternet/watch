@@ -28,3 +28,6 @@ node_modules
 
 # Shared with .mcp.json; overrides a global ignore
 !/.pi/mcp.json
+
+# Scripts
+__pycache__/
