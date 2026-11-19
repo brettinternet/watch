@@ -58,6 +58,19 @@ export function advance(cursors: Cursors, signals: Signal[]): Cursors {
   return next;
 }
 
+/** Per stream, the later of two cursors. */
+export function latest(a: Cursors, b: Cursors): Cursors {
+  const next: Cursors = structuredClone(a);
+  for (const [source, streams] of Object.entries(b)) {
+    const channels = (next[source] ??= {});
+    for (const [stream, ts] of Object.entries(streams)) {
+      const cursor = channels[stream];
+      if (cursor === undefined || compareTs(ts, cursor) > 0) channels[stream] = ts;
+    }
+  }
+  return next;
+}
+
 export function readCursors(path: string): Cursors {
   return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
 }

@@ -1,13 +1,14 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { type Item, matches, runAction } from "./actions";
-import { type Config, type Priority, loadConfig, rank } from "./config";
+import { type Config, inWorkHours, loadConfig, type Priority, rank } from "./config";
 import { type Context, fallback, triage, type Triage } from "./llm";
 import { notify, tellArgv } from "./notify";
 import {
   advance,
   type CollectCtx,
   compareTs,
+  latest,
   readCursors,
   type Signal,
   unseen,
@@ -31,8 +32,8 @@ function toItems(t: Triage, signals: Signal[]): Item[] {
 }
 
 /**
- * Fetches Slack context for the most important items the LLM flagged at or above
- * notify.min_priority and triages once more with it; otherwise returns `first`.
+ * Fetches Slack context for the most important items the LLM flagged at or above the notify
+ * threshold and triages once more with it; otherwise returns `first`.
  */
 async function withContext(
   root: string,
@@ -40,9 +41,11 @@ async function withContext(
   servers: Map<string, SlackServer>,
   fresh: Signal[],
   first: Triage,
+  afterHours?: Priority,
 ): Promise<Triage> {
+  const minPriority = afterHours ?? cfg.notify.min_priority;
   const wanted = first.items
-    .filter((i) => i.needs_context && rank(i.priority) >= rank(cfg.notify.min_priority))
+    .filter((i) => i.needs_context && rank(i.priority) >= rank(minPriority))
     .sort((a, b) => rank(b.priority) - rank(a.priority))
     .slice(0, CONTEXT_ITEMS)
     .flatMap((i) => {
@@ -71,7 +74,7 @@ async function withContext(
     });
   }
   console.log(`context: ${context.length} messages for ${wanted.map((w) => w.id).join(", ")}`);
-  return context.length ? triage(root, cfg, fresh, context) : first;
+  return context.length ? triage(root, cfg, fresh, context, afterHours) : first;
 }
 
 async function main(dryRun: boolean): Promise<number> {
@@ -80,14 +83,33 @@ async function main(dryRun: boolean): Promise<number> {
   if (Object.keys(cfg.sources).length === 0)
     throw new Error("no sources configured; add one to triage.local.yaml");
 
+  const now = Date.now();
+  const afterHours = inWorkHours(cfg.work_hours, new Date(now))
+    ? undefined
+    : cfg.notify.after_hours_min_priority;
+  const minPriority = afterHours ?? cfg.notify.min_priority;
+  if (afterHours) console.log(`after hours: holding anything below ${afterHours}`);
+
   const stateDir = join(root, ".state");
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-  const cursorsPath = join(stateDir, "cursors.json");
-  const cursors = readCursors(cursorsPath);
+  // After hours, scanned messages advance separate cursors, so they stay unhandled until the
+  // next work-hours run summarizes them.
+  const handledPath = join(stateDir, "cursors.json");
+  const heldPath = join(stateDir, "after-hours-cursors.json");
+  const handled = readCursors(handledPath);
+  const cursors = afterHours ? latest(handled, readCursors(heldPath)) : handled;
+  const cursorsPath = afterHours ? heldPath : handledPath;
   const failures: string[] = [];
 
-  const minTs = String(Math.floor((Date.now() - cfg.max_age) / 1000));
-  const since = new Date(Date.now() - cfg.max_age).toISOString();
+  // A work-hours run reaches back to the previous one, so held messages older than max_age count.
+  const lastWorkPath = join(stateDir, "last-work-run");
+  const lastWork =
+    !afterHours && existsSync(lastWorkPath)
+      ? Date.parse(readFileSync(lastWorkPath, "utf8")) || Infinity
+      : Infinity;
+  const from = Math.min(now - cfg.max_age, lastWork);
+  const minTs = String(Math.floor(from / 1000));
+  const since = new Date(from).toISOString();
   const ctx: CollectCtx = { stateDir, env: process.env, since };
 
   // One slack-mcp-server per source for the whole run: a single Slack session covers both
@@ -95,6 +117,7 @@ async function main(dryRun: boolean): Promise<number> {
   const servers = new Map<string, SlackServer>();
   let fresh: Signal[] = [];
   let result: Triage | undefined;
+  let collectFailed = false;
   try {
     const collected = await Promise.all(
       Object.entries(cfg.sources).map(async ([name, source]) => {
@@ -109,14 +132,15 @@ async function main(dryRun: boolean): Promise<number> {
         }
       }),
     );
+    collectFailed = failures.length > 0;
     fresh = unseen(collected.flat(), cursors, minTs).sort((a, b) => a.time.localeCompare(b.time));
     console.log(`${collected.flat().length} unread, ${fresh.length} new`);
 
     if (fresh.length > 0) {
       try {
-        result = await triage(root, cfg, fresh);
+        result = await triage(root, cfg, fresh, [], afterHours);
         try {
-          result = await withContext(root, cfg, servers, fresh, result);
+          result = await withContext(root, cfg, servers, fresh, result, afterHours);
         } catch (e) {
           failures.push(`context: ${message(e)}`); // the first pass still stands
         }
@@ -141,7 +165,7 @@ async function main(dryRun: boolean): Promise<number> {
     for (const i of items)
       console.log(`- ${i.priority} ${i.category} (${i.signals.length}): ${i.reason}`);
 
-    if (rank(priority) >= rank(cfg.notify.min_priority)) {
+    if (rank(priority) >= rank(minPriority)) {
       // Link the newest linkable message of the first top-priority item.
       const url = items.find((i) => i.priority === priority)?.signals.findLast((s) => s.url)?.url;
       const argv = tellArgv(root, cfg.notify, priority, result.title, result.summary, url);
@@ -159,6 +183,7 @@ async function main(dryRun: boolean): Promise<number> {
     }
 
     for (const item of items) {
+      if (afterHours && rank(item.priority) < rank(afterHours)) continue; // held for work hours
       for (const [name, action] of Object.entries(cfg.actions)) {
         if (!matches(action, item)) continue;
         if (dryRun) console.log(`would run action ${name} for: ${item.reason}`);
@@ -170,6 +195,8 @@ async function main(dryRun: boolean): Promise<number> {
     }
     if (!dryRun) writeCursors(cursorsPath, advance(cursors, fresh));
   }
+  if (!dryRun && !afterHours && !collectFailed)
+    writeFileSync(lastWorkPath, new Date(now).toISOString(), { mode: 0o600 });
 
   for (const f of failures) console.error(f);
   return failures.length > 0 ? 1 : notified ? 0 : NOOP;

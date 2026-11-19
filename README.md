@@ -4,7 +4,7 @@ A [Noon](https://github.com/brettinternet/noon) job collects signals from each c
 
 ```mermaid
 flowchart TD
-  cron["noon · every 15m, 2h after hours"] --> main["task triage"]
+  cron["noon · every 15m"] --> main["task triage"]
   main --> s1["slack: acme<br/>own SLACK_ACME_* only"]
   main --> s2["slack: side"]
   main --> g1["github: prs<br/>gh, watched repos"]
@@ -72,14 +72,14 @@ It is a best-effort devtool for macOS and may need updating when Slack changes i
 
 All of these are gitignored or live in `.git`.
 
-| File                | Purpose                                                                                                                                                                                                                                                                      |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.env.local`        | Secrets                                                                                                                                                                                                                                                                      |
-| `triage.local.yaml` | Sources, LLM, and actions. Scaffolded from [`triage.example.yaml`](triage.example.yaml); deep-merges over [`triage.yaml`](triage.yaml), lists replace.                                                                                                                       |
-| `triage.local.md`   | Extra instructions appended to [`prompts/triage.md`](prompts/triage.md), e.g. who you are and what you own                                                                                                                                                                   |
-| `.noon.vars`        | `TRIAGE_SCHEDULE` (default `*/15 8-17 * * *`), `TRIAGE_AFTER_HOURS_SCHEDULE` (default `0 18-23/2,0-7/2 * * *`), `TRIAGE_TIMEOUT` (default `10m`), and `UPDATE_SCHEDULE` (default `0 * * * *`). Keep the two triage schedules from overlapping; concurrent runs notify twice. |
-| `.git/tell.yaml`    | Notification routing                                                                                                                                                                                                                                                         |
-| `.git/noon.yaml`    | Private Noon jobs                                                                                                                                                                                                                                                            |
+| File                | Purpose                                                                                                                                                |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `.env.local`        | Secrets                                                                                                                                                |
+| `triage.local.yaml` | Sources, LLM, and actions. Scaffolded from [`triage.example.yaml`](triage.example.yaml); deep-merges over [`triage.yaml`](triage.yaml), lists replace. |
+| `triage.local.md`   | Extra instructions appended to [`prompts/triage.md`](prompts/triage.md), e.g. who you are and what you own                                             |
+| `.noon.vars`        | `TRIAGE_SCHEDULE` (default `*/15 * * * *`), `TRIAGE_TIMEOUT` (default `10m`), and `UPDATE_SCHEDULE` (default `0 * * * *`)                              |
+| `.git/tell.yaml`    | Notification routing                                                                                                                                   |
+| `.git/noon.yaml`    | Private Noon jobs                                                                                                                                      |
 
 ## How a run works
 
@@ -88,6 +88,8 @@ All of these are gitignored or live in `.git`.
 3. One LLM call with no tools groups messages into items with a priority and category. If it flags up to three items at or above `notify.min_priority` as needing context, the collector fetches their Slack threads and recent channel messages read-only, and a second call triages again with them. The overall priority is the highest item's priority.
 4. If it reaches `notify.min_priority`, run `tell notify` with `notify.args[priority]`. Emergency priority repeats every `retry` until acknowledged or `expire`.
 5. Run matching actions, then advance the cursors.
+
+Outside `work_hours` (weekdays 8–18 local time by default), only items at `notify.after_hours_min_priority` (default `high`) notify or run actions, and the summary covers only them. Those runs advance separate cursors in `.state/after-hours-cursors.json`, so the first work-hours run summarizes everything held overnight or over the weekend, reaching back past `max_age` to the previous work-hours run. Urgent items alerted after hours appear again in that summary, and their actions can run again.
 
 A run exits 0 after notifying, 78 (a Noon noop) when nothing reached the threshold, and 1 on any failure. A failed notification leaves its messages for the next run. If the LLM fails, a fallback lists counts per channel, with DMs at normal priority. A failed context fetch keeps the first pass. Either way the run still exits 1, and Noon's `on_failure` hook notifies once when a streak of failures starts.
 

@@ -13,6 +13,8 @@ const Duration = z
   .regex(/^\d+[smhd]$/, "use a duration like 30s, 3m, 24h, or 2d")
   .transform((s) => Number(s.slice(0, -1)) * UNITS[s.at(-1) as keyof typeof UNITS]);
 
+export const DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
+
 const Name = z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/, "use lowercase letters, digits, - or _");
 const Argv = z.array(z.string().min(1)).min(1);
 
@@ -74,9 +76,21 @@ export const Config = z
         message: "llm.command is required when llm.agent is command",
       }),
     categories: z.record(Name, z.string().min(1)),
+    // Outside these local hours only notify.after_hours_min_priority notifies; the rest is held
+    // for the first run back in work hours. Omit to treat every hour as work hours.
+    work_hours: z
+      .object({
+        days: z.array(z.enum(DAYS)).min(1),
+        start: z.number().int().min(0).max(23),
+        end: z.number().int().min(1).max(24),
+      })
+      .strict()
+      .refine((w) => w.start < w.end, { message: "start must be before end" })
+      .optional(),
     notify: z
       .object({
         min_priority: Priority.default("normal"),
+        after_hours_min_priority: Priority.default("high"),
         args: z.partialRecord(Priority, z.array(z.string())).default({}),
       })
       .strict(),
@@ -88,6 +102,12 @@ export const Config = z
   })
   .strict();
 export type Config = z.infer<typeof Config>;
+
+export function inWorkHours(work: Config["work_hours"], at: Date): boolean {
+  if (!work) return true;
+  const hour = at.getHours();
+  return work.days.includes(DAYS[at.getDay()]!) && hour >= work.start && hour < work.end;
+}
 
 export const CONFIG_FILES = ["triage.yaml", "triage.local.yaml"];
 

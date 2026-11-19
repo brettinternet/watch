@@ -12,8 +12,16 @@ categories:
   fyi: Useful context with no action needed from me
   noise: Bots, chatter, and announcements I can skip
 
+# Local time. After hours, only after_hours_min_priority notifies; everything else waits for the
+# first run back in work hours, which summarizes it all.
+work_hours:
+  days: [mon, tue, wed, thu, fri]
+  start: 8
+  end: 18
+
 notify:
   min_priority: normal
+  after_hours_min_priority: high
   # Extra tell notify arguments per overall priority.
   args:
     low: [--pushover-priority, low]
