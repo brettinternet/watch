@@ -105,7 +105,7 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…`
 
 export async function triage(root: string, cfg: Config, signals: Signal[]): Promise<Triage> {
   const schema = triageSchema(Object.keys(cfg.categories));
-  const jsonSchema = z.toJSONSchema(schema);
+  const jsonSchema = z.toJSONSchema(schema, { target: "draft-7" }); // claude rejects 2020-12
   const cmd = argv(cfg.llm, jsonSchema);
   const proc = Bun.spawn(cmd, {
     cwd: tmpdir(), // keep repository context files out of the model's view
