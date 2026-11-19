@@ -164,6 +164,8 @@ def find_xoxc(blob: bytes, xoxd: str, user_agent: str, workspace: str) -> tuple[
         info = auth_test(token, xoxd, user_agent)
         if info.get("ok"):
             live.setdefault(info["url"], (token, info))
+            if workspace.lower() in f"{info['team']} {info['url']}".lower():
+                return token, info
     if not live:
         die(f"none of {len(candidates)} xoxc tokens is signed in with the current cookie; sign in to the Slack app, then retry")
     hits = [v for u, v in live.items() if workspace.lower() in f"{v[1]['team']} {u}".lower()]
