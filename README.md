@@ -47,7 +47,7 @@ Each clone is configured separately:
 
 4. Run `task setup:tell` to route this clone's notifications to Pushover in `.git/tell.yaml`.
 5. Run `task triage -- --dry-run` to preview a run without notifying, running actions, or recording anything. The first run against a large workspace is slow while the user and channel caches sync.
-6. Run `noon enable` to schedule the job. The Noon service's `PATH` must include `mise`, the agent CLI, and `gh`.
+6. Run `noon enable` to schedule triage and the hourly `update` job, which fast-forwards this checkout and installs dependencies. The Noon service's `PATH` must include `mise`, the agent CLI, and `gh`.
 
 ## Sources
 
@@ -76,7 +76,7 @@ All of these are gitignored or live in `.git`.
 | `.env.local`        | Secrets                                                                                                                                                |
 | `triage.local.yaml` | Sources, LLM, and actions. Scaffolded from [`triage.example.yaml`](triage.example.yaml); deep-merges over [`triage.yaml`](triage.yaml), lists replace. |
 | `triage.local.md`   | Extra instructions appended to [`prompts/triage.md`](prompts/triage.md), e.g. who you are and what you own                                             |
-| `.noon.vars`        | `TRIAGE_SCHEDULE` (default `*/15 * * * *`) and `TRIAGE_TIMEOUT` (default `10m`)                                                                        |
+| `.noon.vars`        | `TRIAGE_SCHEDULE` (default `*/15 * * * *`), `TRIAGE_TIMEOUT` (default `10m`), and `UPDATE_SCHEDULE` (default `0 * * * *`)                              |
 | `.git/tell.yaml`    | Notification routing                                                                                                                                   |
 | `.git/noon.yaml`    | Private Noon jobs                                                                                                                                      |
 

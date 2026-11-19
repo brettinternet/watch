@@ -9,11 +9,13 @@ export const PROMPT_FILES = ["prompts/triage.md", "triage.local.md"];
 
 export function triageSchema(categories: string[]) {
   return z.object({
-    title: z.string().min(1).describe("Headline, at most 80 characters"),
+    title: z.string().min(1).describe("Headline, at most 60 characters"),
     summary: z
       .string()
       .min(1)
-      .describe("Plain-text digest, most important first, at most 800 characters"),
+      .describe(
+        "Terse plain-text lines, most important first, each ending with a next action when clear, at most 400 characters",
+      ),
     items: z.array(
       z.object({
         ids: z.array(z.string()).min(1).describe("Message ids this item covers"),

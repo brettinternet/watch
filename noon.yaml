@@ -13,3 +13,14 @@ jobs:
     noop_exit_code: 78
     run: [mise, exec, --, task, --exit-code, triage] # pass 78 through, not task's 201
     on_failure: [./scripts/on-failure]
+
+  update:
+    description: >
+      Fast-forward this checkout to its upstream and install dependencies.
+      Noop (78) means already current.
+    schedule: "${UPDATE_SCHEDULE:-0 * * * *}"
+    timeout: 5m
+    missed: skip
+    overlap: skip
+    noop_exit_code: 78
+    run: [./scripts/update]

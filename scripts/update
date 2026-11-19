@@ -1,0 +1,9 @@
+#!/bin/sh
+# Noon update job: fast-forward the primary checkout so scheduled triage runs the latest code.
+# Exits 78 (a Noon noop) when already current.
+set -eu
+before=$(git rev-parse HEAD)
+git fetch --quiet
+git merge --ff-only --quiet "@{upstream}"
+[ "$(git rev-parse HEAD)" != "$before" ] || exit 78
+exec mise exec bun -- bun install --frozen-lockfile

@@ -18,4 +18,4 @@ Group messages about the same topic or thread into one item. Every message id be
 
 ## Summary
 
-The title names the most important item. The summary leads with what needs action, says who is asking and where (workspace and channel), and keeps each point to one line. Write plain text with no Markdown. Do not repeat secrets, tokens, or credentials that appear in messages.
+Be extremely concise: terse fragments, no filler, no restating the message. The title names the most important item. The summary has one short line per item that needs attention, most important first, saying who and where (workspace and channel). When the next step is clear, end the line with it as an imperative, e.g. "→ approve PR #42" or "→ reply with ETA". Write plain text with no Markdown. Do not repeat secrets, tokens, or credentials that appear in messages.
