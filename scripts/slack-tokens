@@ -2,15 +2,18 @@
 """Extract Slack stealth-mode tokens from the macOS desktop app into .env.local.
 
 Devtool convenience, best-effort: it reads this machine's logged-in Slack session the way
-the slack-mcp-server docs describe doing by hand. The xoxc token comes from the app's Local
-Storage; the xoxd cookie is decrypted with the "Slack Safe Storage" Keychain key (you may get
-a one-time Keychain prompt). The parsing is deliberately simple and may need updating when
-Slack changes storage; re-run it when a token expires.
+the slack-mcp-server docs describe doing by hand. The xoxd cookie is decrypted with the
+"Slack Safe Storage" Keychain key (you may get a one-time Keychain prompt). Local Storage
+keeps xoxc tokens from signed-out sessions until compaction, so each candidate is checked
+with auth.test against that cookie and only live sessions are kept. Re-run it when a token
+expires.
 
-    scripts/slack-tokens acme                 # one signed-in workspace
-    scripts/slack-tokens acme --workspace acme # pick by team name/url when several are signed in
+    scripts/slack-tokens acme                  # the signed-in workspace whose team name/url contains "acme"
+    scripts/slack-tokens work --workspace acme # when the source name doesn't match it
 
-Writes SLACK_<NAME>_XOXC_TOKEN and SLACK_<NAME>_XOXD_TOKEN to .env.local.
+Writes SLACK_<NAME>_XOXC_TOKEN and SLACK_<NAME>_XOXD_TOKEN to .env.local, plus the desktop
+app's SLACK_<NAME>_USER_AGENT and SLACK_<NAME>_CUSTOM_TLS so slack-mcp-server looks like the
+app; Enterprise Grid revokes the session when it sees a different client.
 """
 
 from __future__ import annotations
@@ -18,17 +21,23 @@ from __future__ import annotations
 import argparse
 import glob
 import hashlib
+import json
 import os
+import platform
+import plistlib
 import re
 import sqlite3
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 
 APP_DIR = os.path.expanduser("~/Library/Application Support/Slack")
+APP_BUNDLE = "/Applications/Slack.app"
 XOXC = re.compile(rb"xoxc-\d+-\d+-\d+-[0-9a-f]+")
 XOXD = re.compile(rb"xoxd-[A-Za-z0-9%/+_.=-]+")
-TEAM_NAME = re.compile(rb'"name":"([^"]{1,64})"')
 
 
 def die(msg: str) -> None:
@@ -41,27 +50,6 @@ def read_leveldb(app_dir: str) -> bytes:
     if not files:
         die(f"no Local Storage under {app_dir}; is the Slack desktop app installed and signed in?")
     return b"".join(open(f, "rb").read() for f in files)
-
-
-def find_xoxc(blob: str, workspace: str | None) -> str:
-    """Map each token to the team-name text just before it (the URL is compressed away)."""
-    found: dict[str, str] = {}
-    for m in re.finditer(rb"xoxc-\d+-\d+-\d+-[0-9a-f]+", blob.encode("latin-1")):
-        token = m.group().decode()
-        window = blob.encode("latin-1")[max(0, m.start() - 220) : m.start()]
-        names = TEAM_NAME.findall(window)
-        label = names[-1].decode(errors="replace").strip() if names else "?"
-        found.setdefault(token, f"{label} … {window[-80:].decode('latin-1', 'replace')}")
-    if not found:
-        die("no xoxc token in Local Storage; open the workspace in the app, then retry")
-    if workspace:
-        hits = [t for t, label in found.items() if workspace.lower() in label.lower()]
-        if len(hits) != 1:
-            die(f"--workspace {workspace!r} matched {len(hits)} tokens; labels: {[l for _, l in found.items()]}")
-        return hits[0]
-    if len(found) > 1:
-        die(f"{len(found)} workspaces signed in; pass --workspace matching one of: {[l for _, l in found.items()]}")
-    return next(iter(found))
 
 
 def keychain_password(app_dir: str) -> bytes:
@@ -109,6 +97,63 @@ def find_xoxd(app_dir: str) -> str:
     return m.group().decode()
 
 
+def desktop_user_agent(bundle: str) -> str | None:
+    """The desktop app's User-Agent, rebuilt from its bundle the way the app builds it."""
+    framework = os.path.join(bundle, "Contents/Frameworks/Electron Framework.framework")
+    try:
+        with open(os.path.join(bundle, "Contents/Info.plist"), "rb") as f:
+            slack = plistlib.load(f)["CFBundleShortVersionString"]
+        with open(os.path.join(framework, "Resources/Info.plist"), "rb") as f:
+            electron = plistlib.load(f)["CFBundleVersion"]
+        with open(os.path.join(framework, "Electron Framework"), "rb") as f:
+            chrome = re.search(rb"Chrome/(\d+\.\d+\.\d+\.\d+)", f.read())
+    except (OSError, KeyError):
+        return None
+    if not chrome:
+        return None
+    macos = "_".join((platform.mac_ver()[0].split(".") + ["0", "0"])[:3])
+    arch = " AppleSilicon" if platform.machine() == "arm64" else ""
+    return (
+        f"Mozilla/5.0 (Macintosh; Intel Mac OS X {macos}) AppleWebKit/537.36 (KHTML, like Gecko) "
+        f"Slack/{slack} Chrome/{chrome.group(1).decode()} Electron/{electron} Safari/537.36{arch} "
+        f"Sonic Slack_SSB/{slack}"
+    )
+
+
+def auth_test(xoxc: str, xoxd: str, user_agent: str | None) -> dict:
+    # The cookie goes raw: it is already URL-encoded, and encoding it again gives invalid_auth.
+    headers = {"Cookie": f"d={xoxd}"} | ({"User-Agent": user_agent} if user_agent else {})
+    req = urllib.request.Request(
+        "https://slack.com/api/auth.test",
+        data=urllib.parse.urlencode({"token": xoxc}).encode(),
+        headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return json.load(resp)
+    except (urllib.error.URLError, json.JSONDecodeError) as e:
+        die(f"auth.test failed: {e}")
+
+
+def find_xoxc(blob: bytes, xoxd: str, user_agent: str | None, workspace: str) -> tuple[str, dict]:
+    """The live xoxc token for the cookie's session in the one workspace whose team/url matches."""
+    candidates = dict.fromkeys(m.group().decode() for m in XOXC.finditer(blob))
+    if not candidates:
+        die("no xoxc token in Local Storage; open the workspace in the app, then retry")
+    live: dict[str, tuple[str, dict]] = {}
+    for token in candidates:
+        info = auth_test(token, xoxd, user_agent)
+        if info.get("ok"):
+            live.setdefault(info["url"], (token, info))
+    if not live:
+        die(f"none of {len(candidates)} xoxc tokens is signed in with the current cookie; sign in to the Slack app, then retry")
+    hits = [v for u, v in live.items() if workspace.lower() in f"{v[1]['team']} {u}".lower()]
+    if len(hits) != 1:
+        signed_in = ["%s (%s)" % (info["team"], u) for u, (_, info) in live.items()]
+        die(f"workspace {workspace!r} matched {len(hits)} signed-in workspaces; pass --workspace to pick one of {signed_in}")
+    return hits[0]
+
+
 def upsert(env_file: str, values: dict[str, str]) -> None:
     lines = []
     if os.path.exists(env_file):
@@ -122,7 +167,7 @@ def upsert(env_file: str, values: dict[str, str]) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Extract Slack stealth tokens into .env.local")
     ap.add_argument("name", help="source name; sets the SLACK_<NAME>_ env prefix")
-    ap.add_argument("--workspace", help="team name/url substring when several workspaces are signed in")
+    ap.add_argument("--workspace", help="team name/url substring (default: the source name)")
     ap.add_argument("--app-dir", default=APP_DIR, help="Slack app support directory")
     ap.add_argument("--env-file", default=".env.local")
     args = ap.parse_args()
@@ -130,10 +175,16 @@ def main() -> None:
         die("only the macOS Slack desktop app is supported")
 
     name = args.name.upper()
-    xoxc = find_xoxc(read_leveldb(args.app_dir).decode("latin-1"), args.workspace)
     xoxd = find_xoxd(args.app_dir)
-    upsert(args.env_file, {f"SLACK_{name}_XOXC_TOKEN": xoxc, f"SLACK_{name}_XOXD_TOKEN": xoxd})
-    print(f"wrote SLACK_{name}_XOXC_TOKEN (xoxc-…{len(xoxc)}c) and SLACK_{name}_XOXD_TOKEN (xoxd-…{len(xoxd)}c) to {args.env_file}")
+    user_agent = desktop_user_agent(APP_BUNDLE)
+    xoxc, info = find_xoxc(read_leveldb(args.app_dir), xoxd, user_agent, args.workspace or args.name)
+    values = {f"SLACK_{name}_XOXC_TOKEN": xoxc, f"SLACK_{name}_XOXD_TOKEN": xoxd}
+    if user_agent:
+        values |= {f"SLACK_{name}_USER_AGENT": user_agent, f"SLACK_{name}_CUSTOM_TLS": "true"}
+    else:
+        print(f"slack-tokens: no Slack app at {APP_BUNDLE}; set SLACK_{name}_USER_AGENT to the session's browser by hand")
+    upsert(args.env_file, values)
+    print(f"wrote {', '.join(values)} for {info['team']} ({info['url']}) to {args.env_file}")
 
 
 if __name__ == "__main__":

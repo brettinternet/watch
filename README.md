@@ -24,7 +24,7 @@ flowchart TD
 Each clone is configured separately:
 
 1. Run `task init` to install tools and dependencies, create `.env.local` and `triage.local.yaml`, and install hooks.
-2. Add each Slack workspace's tokens. From the signed-in macOS desktop app, `task setup:slack -- acme` extracts the stealth `xoxc`/`xoxd` tokens into `.env.local` (`acme` sets the `SLACK_ACME_` prefix; pass `--workspace <name>` when several workspaces are signed in). It may ask once for Keychain access. See [token automation](#token-automation) for how it works. Then add your Pushover credentials:
+2. Add each Slack workspace's tokens. From the signed-in macOS desktop app, `task setup:slack -- acme` extracts the stealth `xoxc`/`xoxd` tokens into `.env.local` (`acme` sets the `SLACK_ACME_` prefix and picks the signed-in workspace whose team name or URL contains it; pass `--workspace <name>` when it doesn't match). It may ask once for Keychain access. See [token automation](#token-automation) for how it works. Then add your Pushover credentials:
 
     ```dotenv
     PUSHOVER_TOKEN=...
@@ -60,12 +60,13 @@ Each source has a name (the key) and a `kind`. The name labels its signals and, 
 
 ## Token automation
 
-`task setup:slack -- <name>` reads this machine's signed-in Slack session the way the slack-mcp-server docs describe doing by hand, and writes `SLACK_<NAME>_XOXC_TOKEN` and `SLACK_<NAME>_XOXD_TOKEN` to `.env.local`:
+`task setup:slack -- <name>` reads this machine's signed-in Slack session the way the slack-mcp-server docs describe doing by hand, and writes `SLACK_<NAME>_XOXC_TOKEN`, `SLACK_<NAME>_XOXD_TOKEN`, `SLACK_<NAME>_USER_AGENT`, and `SLACK_<NAME>_CUSTOM_TLS` to `.env.local`:
 
-- `xoxc` comes from the desktop app's Local Storage (`~/Library/Application Support/Slack`), matched to a workspace by the team name next to it.
 - `xoxd` is the `d` cookie, decrypted with the `Slack Safe Storage` Keychain key (AES-128-CBC, the standard macOS Chromium scheme).
+- `xoxc` comes from the desktop app's Local Storage (`~/Library/Application Support/Slack`). It keeps tokens from signed-out sessions until compaction, so each candidate is checked with `auth.test` against the cookie, and the live one whose team name or URL matches `--workspace` (default: `<name>`) wins.
+- `USER_AGENT` is the desktop app's User-Agent, rebuilt from `/Applications/Slack.app`, and `CUSTOM_TLS=true` makes slack-mcp-server's TLS handshake look like Chrome. Enterprise Grid session protection signs you out of the app when the session shows up from a different client; these make the server look like the app ([docs](https://github.com/korotovsky/slack-mcp-server/blob/master/docs/03-configuration-and-usage.md)). Re-run the command after a Slack update so the User-Agent tracks the app.
 
-It is a best-effort devtool for macOS and may need updating when Slack changes its storage. Stealth tokens expire; re-run the command when they do. If a run fails with `invalid_auth` in the log, the collector says to re-run it. For a browser session instead of the app, pass `--app-dir` at the Chromium profile, or copy the tokens by hand from the browser ([how](https://github.com/korotovsky/slack-mcp-server/blob/master/docs/01-authentication-setup.md)). To avoid session tokens entirely, set a long-lived `SLACK_<NAME>_XOXP_TOKEN` (User OAuth) instead; `serverEnv` accepts it in place of the `xoxc`/`xoxd` pair.
+It is a best-effort devtool for macOS and may need updating when Slack changes its storage. Stealth tokens expire; re-run the command when they do. If a run fails with `invalid_auth` in the log, the collector says to re-run it. For a browser session instead of the app, pass `--app-dir` at the Chromium profile and set `SLACK_<NAME>_USER_AGENT` to that browser's User-Agent, or copy the tokens by hand from the browser ([how](https://github.com/korotovsky/slack-mcp-server/blob/master/docs/01-authentication-setup.md)). To avoid session tokens entirely, set a long-lived `SLACK_<NAME>_XOXP_TOKEN` (User OAuth) instead; `serverEnv` accepts it in place of the `xoxc`/`xoxd` pair.
 
 ## Per-clone files
 
