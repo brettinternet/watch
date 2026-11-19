@@ -35,7 +35,7 @@ import urllib.parse
 import urllib.request
 
 APP_DIR = os.path.expanduser("~/Library/Application Support/Slack")
-APP_BUNDLE = "/Applications/Slack.app"
+APP_BUNDLES = ("/Applications/Slack.app", os.path.expanduser("~/Applications/Slack.app"))
 XOXC = re.compile(rb"xoxc-\d+-\d+-\d+-[0-9a-f]+")
 XOXD = re.compile(rb"xoxd-[A-Za-z0-9%/+_.=-]+")
 
@@ -52,9 +52,26 @@ def read_leveldb(app_dir: str) -> bytes:
     return b"".join(open(f, "rb").read() for f in files)
 
 
+def is_app_store(app_dir: str) -> bool:
+    return "/Containers/com.tinyspeck.slackmacgap/" in app_dir
+
+
+def find_bundle(app_dir: str) -> str:
+    """The installed Slack.app that owns app_dir; only App Store builds carry a receipt."""
+    found = [
+        b
+        for b in APP_BUNDLES
+        if os.path.isdir(b) and os.path.exists(os.path.join(b, "Contents/_MASReceipt")) == is_app_store(app_dir)
+    ]
+    if len(found) != 1:
+        kind = "App Store" if is_app_store(app_dir) else "direct-download"
+        die(f"found {len(found)} {kind} Slack apps in {' or '.join(APP_BUNDLES)}; pass --app-bundle")
+    return found[0]
+
+
 def keychain_password(app_dir: str) -> bytes:
     # Direct-download and App Store installs each leave their own "Slack Safe Storage" item.
-    account = "Slack App Store Key" if "/Containers/com.tinyspeck.slackmacgap/" in app_dir else "Slack Key"
+    account = "Slack App Store Key" if is_app_store(app_dir) else "Slack Key"
     out = subprocess.run(
         ["security", "find-generic-password", "-w", "-s", "Slack Safe Storage", "-a", account],
         capture_output=True,
@@ -97,8 +114,11 @@ def find_xoxd(app_dir: str) -> str:
     return m.group().decode()
 
 
-def desktop_user_agent(bundle: str) -> str | None:
-    """The desktop app's User-Agent, rebuilt from its bundle the way the app builds it."""
+def desktop_user_agent(bundle: str) -> str:
+    """The desktop app's User-Agent, rebuilt from its bundle the way the app builds it.
+
+    Fatal when it can't be built: without it Enterprise Grid revokes the session and signs
+    the user out of every workspace."""
     framework = os.path.join(bundle, "Contents/Frameworks/Electron Framework.framework")
     try:
         with open(os.path.join(bundle, "Contents/Info.plist"), "rb") as f:
@@ -107,10 +127,10 @@ def desktop_user_agent(bundle: str) -> str | None:
             electron = plistlib.load(f)["CFBundleVersion"]
         with open(os.path.join(framework, "Electron Framework"), "rb") as f:
             chrome = re.search(rb"Chrome/(\d+\.\d+\.\d+\.\d+)", f.read())
-    except (OSError, KeyError):
-        return None
+    except (OSError, KeyError) as e:
+        die(f"could not build the Slack app's User-Agent from {bundle}: {e}")
     if not chrome:
-        return None
+        die(f"no Chrome version in {bundle}'s Electron Framework; cannot build the User-Agent")
     macos = "_".join((platform.mac_ver()[0].split(".") + ["0", "0"])[:3])
     arch = " AppleSilicon" if platform.machine() == "arm64" else ""
     return (
@@ -120,13 +140,12 @@ def desktop_user_agent(bundle: str) -> str | None:
     )
 
 
-def auth_test(xoxc: str, xoxd: str, user_agent: str | None) -> dict:
+def auth_test(xoxc: str, xoxd: str, user_agent: str) -> dict:
     # The cookie goes raw: it is already URL-encoded, and encoding it again gives invalid_auth.
-    headers = {"Cookie": f"d={xoxd}"} | ({"User-Agent": user_agent} if user_agent else {})
     req = urllib.request.Request(
         "https://slack.com/api/auth.test",
         data=urllib.parse.urlencode({"token": xoxc}).encode(),
-        headers=headers,
+        headers={"Cookie": f"d={xoxd}", "User-Agent": user_agent},
     )
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
@@ -135,7 +154,7 @@ def auth_test(xoxc: str, xoxd: str, user_agent: str | None) -> dict:
         die(f"auth.test failed: {e}")
 
 
-def find_xoxc(blob: bytes, xoxd: str, user_agent: str | None, workspace: str) -> tuple[str, dict]:
+def find_xoxc(blob: bytes, xoxd: str, user_agent: str, workspace: str) -> tuple[str, dict]:
     """The live xoxc token for the cookie's session in the one workspace whose team/url matches."""
     candidates = dict.fromkeys(m.group().decode() for m in XOXC.finditer(blob))
     if not candidates:
@@ -169,20 +188,22 @@ def main() -> None:
     ap.add_argument("name", help="source name; sets the SLACK_<NAME>_ env prefix")
     ap.add_argument("--workspace", help="team name/url substring (default: the source name)")
     ap.add_argument("--app-dir", default=APP_DIR, help="Slack app support directory")
+    ap.add_argument("--app-bundle", help="Slack.app that owns --app-dir (default: found in /Applications or ~/Applications)")
     ap.add_argument("--env-file", default=".env.local")
     args = ap.parse_args()
     if sys.platform != "darwin":
         die("only the macOS Slack desktop app is supported")
 
     name = args.name.upper()
+    user_agent = desktop_user_agent(args.app_bundle or find_bundle(args.app_dir))
     xoxd = find_xoxd(args.app_dir)
-    user_agent = desktop_user_agent(APP_BUNDLE)
     xoxc, info = find_xoxc(read_leveldb(args.app_dir), xoxd, user_agent, args.workspace or args.name)
-    values = {f"SLACK_{name}_XOXC_TOKEN": xoxc, f"SLACK_{name}_XOXD_TOKEN": xoxd}
-    if user_agent:
-        values |= {f"SLACK_{name}_USER_AGENT": user_agent, f"SLACK_{name}_CUSTOM_TLS": "true"}
-    else:
-        print(f"slack-tokens: no Slack app at {APP_BUNDLE}; set SLACK_{name}_USER_AGENT to the session's browser by hand")
+    values = {
+        f"SLACK_{name}_XOXC_TOKEN": xoxc,
+        f"SLACK_{name}_XOXD_TOKEN": xoxd,
+        f"SLACK_{name}_USER_AGENT": user_agent,
+        f"SLACK_{name}_CUSTOM_TLS": "true",
+    }
     upsert(args.env_file, values)
     print(f"wrote {', '.join(values)} for {info['team']} ({info['url']}) to {args.env_file}")
 

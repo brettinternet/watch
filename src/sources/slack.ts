@@ -30,6 +30,12 @@ export function serverEnv(
       `set ${prefix}XOXC_TOKEN and ${prefix}XOXD_TOKEN (or ${prefix}XOXP_TOKEN) in .env.local`,
     );
   }
+  // Without the app's User-Agent, Enterprise Grid revokes the session and signs the user out everywhere.
+  if (browser && !out.SLACK_MCP_USER_AGENT) {
+    throw new Error(
+      `${prefix}USER_AGENT is not set; re-run \`task setup:slack -- ${name}\` before using the xoxc/xoxd tokens`,
+    );
+  }
   return {
     ...out,
     SLACK_MCP_ENABLED_TOOLS:
