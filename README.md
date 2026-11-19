@@ -4,7 +4,7 @@ A [Noon](https://github.com/brettinternet/noon) job collects signals from each c
 
 ```mermaid
 flowchart TD
-  cron["noon · every 15m"] --> main["task triage"]
+  cron["noon · every 15m, 2h after hours"] --> main["task triage"]
   main --> s1["slack: acme<br/>own SLACK_ACME_* only"]
   main --> s2["slack: side"]
   main --> g1["github: prs<br/>gh, watched repos"]
@@ -72,14 +72,14 @@ It is a best-effort devtool for macOS and may need updating when Slack changes i
 
 All of these are gitignored or live in `.git`.
 
-| File                | Purpose                                                                                                                                                |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `.env.local`        | Secrets                                                                                                                                                |
-| `triage.local.yaml` | Sources, LLM, and actions. Scaffolded from [`triage.example.yaml`](triage.example.yaml); deep-merges over [`triage.yaml`](triage.yaml), lists replace. |
-| `triage.local.md`   | Extra instructions appended to [`prompts/triage.md`](prompts/triage.md), e.g. who you are and what you own                                             |
-| `.noon.vars`        | `TRIAGE_SCHEDULE` (default `*/15 * * * *`), `TRIAGE_TIMEOUT` (default `10m`), and `UPDATE_SCHEDULE` (default `0 * * * *`)                              |
-| `.git/tell.yaml`    | Notification routing                                                                                                                                   |
-| `.git/noon.yaml`    | Private Noon jobs                                                                                                                                      |
+| File                | Purpose                                                                                                                                                                                                                                                                      |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.env.local`        | Secrets                                                                                                                                                                                                                                                                      |
+| `triage.local.yaml` | Sources, LLM, and actions. Scaffolded from [`triage.example.yaml`](triage.example.yaml); deep-merges over [`triage.yaml`](triage.yaml), lists replace.                                                                                                                       |
+| `triage.local.md`   | Extra instructions appended to [`prompts/triage.md`](prompts/triage.md), e.g. who you are and what you own                                                                                                                                                                   |
+| `.noon.vars`        | `TRIAGE_SCHEDULE` (default `*/15 8-17 * * *`), `TRIAGE_AFTER_HOURS_SCHEDULE` (default `0 18-23/2,0-7/2 * * *`), `TRIAGE_TIMEOUT` (default `10m`), and `UPDATE_SCHEDULE` (default `0 * * * *`). Keep the two triage schedules from overlapping; concurrent runs notify twice. |
+| `.git/tell.yaml`    | Notification routing                                                                                                                                                                                                                                                         |
+| `.git/noon.yaml`    | Private Noon jobs                                                                                                                                                                                                                                                            |
 
 ## How a run works
 
