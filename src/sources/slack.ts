@@ -32,18 +32,21 @@ export function serverEnv(
   }
   return {
     ...out,
-    SLACK_MCP_ENABLED_TOOLS: "conversations_unreads",
+    SLACK_MCP_ENABLED_TOOLS: "conversations_unreads,conversations_replies,conversations_history",
     SLACK_MCP_USERS_CACHE: join(cacheDir, "users_cache.json"),
     SLACK_MCP_CHANNELS_CACHE: join(cacheDir, "channels_cache_v2.json"),
     SLACK_MCP_LOG_LEVEL: out.SLACK_MCP_LOG_LEVEL ?? "warn",
   };
 }
 
-export async function collectSlack(
+type Call = (tool: string, args: Record<string, unknown>) => Promise<Record<string, string>[]>;
+
+/** Runs `fn` against this workspace's server, which only exposes read tools. */
+async function withServer<T>(
   name: string,
-  source: SlackSource,
   ctx: CollectCtx,
-): Promise<Signal[]> {
+  fn: (call: Call, cacheDir: string) => Promise<T>,
+): Promise<T> {
   const cacheDir = join(ctx.stateDir, "slack", name);
   mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
   const transport = new StdioClientTransport({
@@ -63,31 +66,61 @@ export async function collectSlack(
         `${msg} — if the log shows invalid_auth, the stealth tokens expired; re-run: task setup:slack ${name}`,
       );
     }
-    const result = await client.callTool(
-      {
-        name: "conversations_unreads",
-        arguments: {
-          include_messages: true,
-          channel_types: source.channel_types,
-          mentions_only: source.mentions_only,
-          max_channels: source.max_channels,
-          max_messages_per_channel: source.max_messages_per_channel,
-        },
-      },
-      undefined,
-      { timeout: TIMEOUT_MS },
-    );
-    const text = (result.content as { type: string; text?: string }[])
-      .flatMap((c) => (c.type === "text" && c.text ? [c.text] : []))
-      .join("");
-    if (result.isError) throw new Error(`conversations_unreads: ${text}`);
-    const link = source.url
-      ? linker(source.url, join(cacheDir, "channels_cache_v2.json"))
-      : undefined;
-    return toSignals(name, parseCsv(text), source.exclude_channels, link);
+    const call: Call = async (tool, args) => {
+      const result = await client.callTool({ name: tool, arguments: args }, undefined, {
+        timeout: TIMEOUT_MS,
+      });
+      const text = (result.content as { type: string; text?: string }[])
+        .flatMap((c) => (c.type === "text" && c.text ? [c.text] : []))
+        .join("");
+      if (result.isError) throw new Error(`${tool}: ${text}`);
+      return parseCsv(text);
+    };
+    return await fn(call, cacheDir);
   } finally {
     await client.close();
   }
+}
+
+export function collectSlack(
+  name: string,
+  source: SlackSource,
+  ctx: CollectCtx,
+): Promise<Signal[]> {
+  return withServer(name, ctx, async (call, cacheDir) => {
+    const rows = await call("conversations_unreads", {
+      include_messages: true,
+      channel_types: source.channel_types,
+      mentions_only: source.mentions_only,
+      max_channels: source.max_channels,
+      max_messages_per_channel: source.max_messages_per_channel,
+    });
+    const link = source.url
+      ? linker(source.url, join(cacheDir, "channels_cache_v2.json"))
+      : undefined;
+    return toSignals(name, rows, source.exclude_channels, link);
+  });
+}
+
+/** Each signal's thread plus the channel's recent messages, so triage can understand it. */
+export function slackContext(
+  name: string,
+  ctx: CollectCtx,
+  signals: Signal[],
+): Promise<Signal[][]> {
+  return withServer(name, ctx, async (call) => {
+    const out: Signal[][] = [];
+    for (const s of signals) {
+      const thread = await call("conversations_replies", {
+        channel_id: s.channel,
+        thread_ts: s.thread ?? s.ts,
+        limit: "30",
+      });
+      const recent = await call("conversations_history", { channel_id: s.channel, limit: "15" });
+      out.push(toSignals(name, [...recent, ...thread], []));
+    }
+    return out;
+  });
 }
 
 type Link = (channel: string, ts: string, thread?: string) => string | undefined;

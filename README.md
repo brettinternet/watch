@@ -84,7 +84,7 @@ All of these are gitignored or live in `.git`.
 
 1. Collect unread messages from every source. Messages stay unread in Slack.
 2. Drop messages already handled, using per-channel cursors in `.state/cursors.json`, and messages older than `max_age`.
-3. One LLM call with no tools groups messages into items with a priority and category. The overall priority is the highest item's priority.
+3. One LLM call with no tools groups messages into items with a priority and category. If it flags up to three items at or above `notify.min_priority` as needing context, the collector fetches their Slack threads and recent channel messages read-only, and a second call triages again with them. The overall priority is the highest item's priority.
 4. If it reaches `notify.min_priority`, run `tell notify` with `notify.args[priority]`. Emergency priority repeats every `retry` until acknowledged or `expire`.
 5. Run matching actions, then advance the cursors.
 
