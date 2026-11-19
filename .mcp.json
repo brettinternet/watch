@@ -8,7 +8,7 @@
       "command": "noon",
       "args": ["mcp"]
     },
-    "slack": {
+    "slack-local": {
       "command": "task",
       "args": ["slack:mcp"]
     }

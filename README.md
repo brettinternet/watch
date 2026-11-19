@@ -118,7 +118,7 @@ Message text is untrusted input. Give that agent read-only tools.
 
 ## Agent sessions
 
-`.mcp.json` (and `.pi/mcp.json`, a symlink to it) adds a `slack` MCP server through `task slack:mcp`, using the first Slack source's tokens from the primary checkout, so it also works in worktrees. Pass `-- <source>` for another workspace. Tools are read-only; set `SLACK_<NAME>_ENABLED_TOOLS` in `.env.local` to a tool list, or `all` for every tool including posting.
+`.mcp.json` (and `.pi/mcp.json`, a symlink to it) adds a `slack-local` MCP server through `task slack:mcp` (named so it never shadows an official `slack` server), using the first Slack source's tokens from the primary checkout, so it also works in worktrees. Pass `-- <source>` for another workspace. Tools are read-only; set `SLACK_<NAME>_ENABLED_TOOLS` in `.env.local` to a tool list, or `all` for every tool including posting.
 
 ## Development
 
