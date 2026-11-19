@@ -13,7 +13,7 @@ expires.
 
 Writes SLACK_<NAME>_XOXC_TOKEN and SLACK_<NAME>_XOXD_TOKEN to .env.local, plus the desktop
 app's SLACK_<NAME>_USER_AGENT and SLACK_<NAME>_CUSTOM_TLS so slack-mcp-server looks like the
-app; Enterprise Grid revokes the session when it sees a different client.
+app; Enterprise Grid can revoke the session when it sees a different client.
 """
 
 from __future__ import annotations
@@ -117,7 +117,7 @@ def find_xoxd(app_dir: str) -> str:
 def desktop_user_agent(bundle: str) -> str:
     """The desktop app's User-Agent, rebuilt from its bundle the way the app builds it.
 
-    Fatal when it can't be built: without it Enterprise Grid revokes the session and signs
+    Fatal when it can't be built: without it Enterprise Grid can revoke the session and sign
     the user out of every workspace."""
     framework = os.path.join(bundle, "Contents/Frameworks/Electron Framework.framework")
     try:

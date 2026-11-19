@@ -8,6 +8,7 @@ const env = {
   SLACK_ACME_XOXC_TOKEN: "xoxc-acme",
   SLACK_ACME_XOXD_TOKEN: "xoxd-acme",
   SLACK_ACME_USER_AGENT: "Slack/4",
+  SLACK_ACME_CUSTOM_TLS: "true",
   SLACK_ACMEX_XOXC_TOKEN: "xoxc-acmex",
   SLACK_OTHER_XOXP_TOKEN: "xoxp-other",
   PUSHOVER_TOKEN: "pushover",
@@ -23,9 +24,11 @@ test("a workspace's MCP server sees only that workspace's tokens", () => {
   expect(() => serverEnv("missing", env, "/cache")).toThrow("SLACK_MISSING_XOXC_TOKEN");
 });
 
-test("xoxc/xoxd without the app's User-Agent is refused (Enterprise Grid signs the user out)", () => {
-  const { SLACK_ACME_USER_AGENT: _, ...noAgent } = env;
+test("xoxc/xoxd without the desktop client fingerprint is refused", () => {
+  const { SLACK_ACME_USER_AGENT: _agent, ...noAgent } = env;
+  const { SLACK_ACME_CUSTOM_TLS: _tls, ...noTls } = env;
   expect(() => serverEnv("acme", noAgent, "/cache")).toThrow("task setup:slack -- acme");
+  expect(() => serverEnv("acme", noTls, "/cache")).toThrow("SLACK_ACME_CUSTOM_TLS=true");
   expect(serverEnv("other", env, "/cache").SLACK_MCP_XOXP_TOKEN).toBe("xoxp-other");
 });
 

@@ -1,7 +1,8 @@
 /**
  * Read-only setup and state checks: `task doctor`. Prints one `ok|warn|fail name: detail` line
  * per check, then Tell's and Noon's own doctors and recent runs. Exits 1 if any check fails.
- * Never prints secrets: only whether they are set and what Slack says about them.
+ * Never prints secrets. Only xoxp gets a live Slack check; desktop-session tokens are not
+ * requested through Bun's differently fingerprinted HTTP/TLS client.
  */
 import { existsSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -41,14 +42,18 @@ async function slackAuth(name: string) {
     return report("fail", `slack ${name}`, (e as Error).message);
   }
   const xoxp = env.SLACK_MCP_XOXP_TOKEN;
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${xoxp ?? env.SLACK_MCP_XOXC_TOKEN}`,
-  };
-  if (!xoxp) headers.Cookie = `d=${env.SLACK_MCP_XOXD_TOKEN}`;
+  // Bun's fetch cannot reproduce slack-mcp-server's custom TLS fingerprint. Don't risk session
+  // revocation with a differently fingerprinted live check for desktop-session credentials.
+  if (!xoxp)
+    return report(
+      "warn",
+      `slack ${name}`,
+      "xoxc/xoxd not live-tested; auth.test cannot use slack-mcp-server's custom TLS",
+    );
   try {
     const res = await fetch("https://slack.com/api/auth.test", {
       method: "POST",
-      headers,
+      headers: { Authorization: `Bearer ${xoxp}` },
       signal: AbortSignal.timeout(10_000),
     });
     const body = (await res.json()) as {
