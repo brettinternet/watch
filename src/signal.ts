@@ -17,6 +17,13 @@ export type Signal = {
 /** source → channel → highest ts already handled. */
 export type Cursors = Record<string, Record<string, string>>;
 
+/** Shared context passed to every source collector. `since` is an ISO lower bound for fetches. */
+export type CollectCtx = {
+  stateDir: string;
+  env: Record<string, string | undefined>;
+  since: string;
+};
+
 /** Compares decimal timestamps exactly; Number() would lose Slack's microsecond digits. */
 export function compareTs(a: string, b: string): number {
   const [ai = "0", af = ""] = a.split(".");

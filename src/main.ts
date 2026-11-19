@@ -4,17 +4,20 @@ import { type Item, matches, runAction } from "./actions";
 import { type Config, type Priority, type Source, loadConfig, rank } from "./config";
 import { fallback, triage, type Triage } from "./llm";
 import { notify, tellArgv } from "./notify";
-import { advance, readCursors, type Signal, unseen, writeCursors } from "./signal";
+import { advance, type CollectCtx, readCursors, type Signal, unseen, writeCursors } from "./signal";
+import { collectGithub } from "./sources/github";
 import { collectSlack } from "./sources/slack";
 
 const NOOP = 78; // noon.yaml noop_exit_code: nothing new or nothing worth notifying
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-function collect(name: string, source: Source, ctx: { stateDir: string; env: typeof process.env }) {
+function collect(name: string, source: Source, ctx: CollectCtx) {
   switch (source.kind) {
     case "slack":
       return collectSlack(name, source, ctx);
+    case "github":
+      return collectGithub(name, source, ctx);
   }
 }
 
@@ -39,17 +42,18 @@ async function main(dryRun: boolean): Promise<number> {
   const cursors = readCursors(cursorsPath);
   const failures: string[] = [];
 
+  const minTs = String(Math.floor((Date.now() - cfg.max_age) / 1000));
+  const since = new Date(Date.now() - cfg.max_age).toISOString();
   const collected = await Promise.all(
     Object.entries(cfg.sources).map(async ([name, source]) => {
       try {
-        return await collect(name, source, { stateDir, env: process.env });
+        return await collect(name, source, { stateDir, env: process.env, since });
       } catch (e) {
         failures.push(`source ${name}: ${message(e)}`);
         return [];
       }
     }),
   );
-  const minTs = String(Math.floor((Date.now() - cfg.max_age) / 1000));
   const fresh = unseen(collected.flat(), cursors, minTs).sort((a, b) =>
     a.time.localeCompare(b.time),
   );

@@ -28,7 +28,16 @@ const SlackSource = z
   .strict();
 export type SlackSource = z.infer<typeof SlackSource>;
 
-const Source = z.discriminatedUnion("kind", [SlackSource]);
+const GithubSource = z
+  .object({
+    kind: z.literal("github"),
+    repos: z.array(z.string().regex(/^[^/\s]+\/[^/\s]+$/, "use owner/repo")).min(1),
+    author: z.string().min(1).default("@me"),
+  })
+  .strict();
+export type GithubSource = z.infer<typeof GithubSource>;
+
+const Source = z.discriminatedUnion("kind", [SlackSource, GithubSource]);
 export type Source = z.infer<typeof Source>;
 
 const Action = z
