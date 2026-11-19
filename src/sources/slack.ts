@@ -48,12 +48,12 @@ export function serverEnv(
 
 type Call = (tool: string, args: Record<string, unknown>) => Promise<Record<string, string>[]>;
 
-/** Runs `fn` against this workspace's server, which only exposes read tools. */
-async function withServer<T>(
-  name: string,
-  ctx: CollectCtx,
-  fn: (call: Call, cacheDir: string) => Promise<T>,
-): Promise<T> {
+/** A workspace's running server, reused for collection and context so one triage run opens
+ * one Slack session per source instead of re-authenticating for the context pass. */
+export type SlackServer = { call: Call; cacheDir: string; close: () => Promise<void> };
+
+/** Starts this workspace's server, which only exposes read tools. Caller must `close()` it. */
+export async function openServer(name: string, ctx: CollectCtx): Promise<SlackServer> {
   const cacheDir = join(ctx.stateDir, "slack", name);
   mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
   const transport = new StdioClientTransport({
@@ -64,59 +64,56 @@ async function withServer<T>(
   });
   const client = new Client({ name: "watch-triage", version: "1" });
   try {
-    try {
-      await client.connect(transport, { timeout: TIMEOUT_MS });
-    } catch (e) {
-      // The server exits at startup on invalid_auth, so connect just sees the pipe close.
-      const msg = e instanceof Error ? e.message : String(e);
-      throw new Error(
-        `${msg} — if the log shows invalid_auth, the stealth tokens expired; re-run: task setup:slack ${name}`,
-      );
-    }
-    const call: Call = async (tool, args) => {
-      const result = await client.callTool({ name: tool, arguments: args }, undefined, {
-        timeout: TIMEOUT_MS,
-      });
-      const text = (result.content as { type: string; text?: string }[])
-        .flatMap((c) => (c.type === "text" && c.text ? [c.text] : []))
-        .join("");
-      if (result.isError) throw new Error(`${tool}: ${text}`);
-      return parseCsv(text);
-    };
-    return await fn(call, cacheDir);
-  } finally {
+    await client.connect(transport, { timeout: TIMEOUT_MS });
+  } catch (e) {
+    // The server exits at startup on invalid_auth, so connect just sees the pipe close.
     await client.close();
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `${msg} — if the log shows invalid_auth, the stealth tokens expired; re-run: task setup:slack ${name}`,
+    );
   }
+  const call: Call = async (tool, args) => {
+    const result = await client.callTool({ name: tool, arguments: args }, undefined, {
+      timeout: TIMEOUT_MS,
+    });
+    const text = (result.content as { type: string; text?: string }[])
+      .flatMap((c) => (c.type === "text" && c.text ? [c.text] : []))
+      .join("");
+    if (result.isError) throw new Error(`${tool}: ${text}`);
+    return parseCsv(text);
+  };
+  return { call, cacheDir, close: () => client.close() };
 }
 
 // Search indexes with a delay. Taking only settled results keeps the mentions cursor from
 // skipping a reply that is indexed after a newer one.
 const SEARCH_LAG_S = 120;
 
-export function collectSlack(
+export async function collectSlack(
   name: string,
   source: SlackSource,
   ctx: CollectCtx,
+  server: SlackServer,
 ): Promise<Signal[]> {
-  return withServer(name, ctx, async (call, cacheDir) => {
-    const channels = readChannels(cacheDir);
-    const unreads = toSignals(
-      name,
-      await call("conversations_unreads", {
-        include_messages: true,
-        channel_types: source.channel_types,
-        mentions_only: source.mentions_only,
-        max_channels: source.max_channels,
-        max_messages_per_channel: source.max_messages_per_channel,
-      }),
-      source.exclude_channels,
-      source.url ? linker(source.url, channels) : undefined,
-    );
-    if (!source.thread_mentions) return unreads;
-    const seen = new Set(unreads.map((s) => s.key));
-    const mentions = await threadMentions(name, call, ctx, channels, source.exclude_channels);
-    return [...unreads, ...mentions.filter((s) => !seen.has(s.key))];
-  });
+  const { call, cacheDir } = server;
+  const channels = readChannels(cacheDir);
+  const unreads = toSignals(
+    name,
+    await call("conversations_unreads", {
+      include_messages: true,
+      channel_types: source.channel_types,
+      mentions_only: source.mentions_only,
+      max_channels: source.max_channels,
+      max_messages_per_channel: source.max_messages_per_channel,
+    }),
+    source.exclude_channels,
+    source.url ? linker(source.url, channels) : undefined,
+  );
+  if (!source.thread_mentions) return unreads;
+  const seen = new Set(unreads.map((s) => s.key));
+  const mentions = await threadMentions(name, call, ctx, channels, source.exclude_channels);
+  return [...unreads, ...mentions.filter((s) => !seen.has(s.key))];
 }
 
 /**
@@ -151,24 +148,22 @@ async function threadMentions(
 }
 
 /** Each signal's thread plus the channel's recent messages, so triage can understand it. */
-export function slackContext(
+export async function slackContext(
   name: string,
-  ctx: CollectCtx,
+  call: Call,
   signals: Signal[],
 ): Promise<Signal[][]> {
-  return withServer(name, ctx, async (call) => {
-    const out: Signal[][] = [];
-    for (const s of signals) {
-      const thread = await call("conversations_replies", {
-        channel_id: s.channel,
-        thread_ts: s.thread ?? s.ts,
-        limit: "30",
-      });
-      const recent = await call("conversations_history", { channel_id: s.channel, limit: "15" });
-      out.push(toSignals(name, [...recent, ...thread], []));
-    }
-    return out;
-  });
+  const out: Signal[][] = [];
+  for (const s of signals) {
+    const thread = await call("conversations_replies", {
+      channel_id: s.channel,
+      thread_ts: s.thread ?? s.ts,
+      limit: "30",
+    });
+    const recent = await call("conversations_history", { channel_id: s.channel, limit: "15" });
+    out.push(toSignals(name, [...recent, ...thread], []));
+  }
+  return out;
 }
 
 type Channel = { id: string; name: string };

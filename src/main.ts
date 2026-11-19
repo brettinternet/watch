@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { type Item, matches, runAction } from "./actions";
-import { type Config, type Priority, type Source, loadConfig, rank } from "./config";
+import { type Config, type Priority, loadConfig, rank } from "./config";
 import { type Context, fallback, triage, type Triage } from "./llm";
 import { notify, tellArgv } from "./notify";
 import {
@@ -14,21 +14,12 @@ import {
   writeCursors,
 } from "./signal";
 import { collectGithub } from "./sources/github";
-import { collectSlack, slackContext } from "./sources/slack";
+import { collectSlack, openServer, type SlackServer, slackContext } from "./sources/slack";
 
 const NOOP = 78; // noon.yaml noop_exit_code: nothing new or nothing worth notifying
 const CONTEXT_ITEMS = 3; // most flagged items per run that get Slack context and a second pass
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
-function collect(name: string, source: Source, ctx: CollectCtx) {
-  switch (source.kind) {
-    case "slack":
-      return collectSlack(name, source, ctx);
-    case "github":
-      return collectGithub(name, source, ctx);
-  }
-}
 
 function toItems(t: Triage, signals: Signal[]): Item[] {
   return t.items.flatMap((i) => {
@@ -46,7 +37,7 @@ function toItems(t: Triage, signals: Signal[]): Item[] {
 async function withContext(
   root: string,
   cfg: Config,
-  ctx: CollectCtx,
+  servers: Map<string, SlackServer>,
   fresh: Signal[],
   first: Triage,
 ): Promise<Triage> {
@@ -63,10 +54,12 @@ async function withContext(
   const seen = new Set(fresh.map((s) => s.key));
   const context: Context = [];
   for (const source of new Set(wanted.map((w) => w.signal.source))) {
+    const server = servers.get(source);
+    if (!server) continue; // its session failed to open during collection
     const mine = wanted.filter((w) => w.signal.source === source);
     const fetched = await slackContext(
       source,
-      ctx,
+      server.call,
       mine.map((w) => w.signal),
     );
     mine.forEach((w, n) => {
@@ -96,35 +89,49 @@ async function main(dryRun: boolean): Promise<number> {
   const minTs = String(Math.floor((Date.now() - cfg.max_age) / 1000));
   const since = new Date(Date.now() - cfg.max_age).toISOString();
   const ctx: CollectCtx = { stateDir, env: process.env, since };
-  const collected = await Promise.all(
-    Object.entries(cfg.sources).map(async ([name, source]) => {
+
+  // One slack-mcp-server per source for the whole run: a single Slack session covers both
+  // collection and the context pass, instead of re-authenticating between them.
+  const servers = new Map<string, SlackServer>();
+  let fresh: Signal[] = [];
+  let result: Triage | undefined;
+  try {
+    const collected = await Promise.all(
+      Object.entries(cfg.sources).map(async ([name, source]) => {
+        try {
+          if (source.kind === "github") return await collectGithub(name, source, ctx);
+          const server = await openServer(name, ctx);
+          servers.set(name, server);
+          return await collectSlack(name, source, ctx, server);
+        } catch (e) {
+          failures.push(`source ${name}: ${message(e)}`);
+          return [];
+        }
+      }),
+    );
+    fresh = unseen(collected.flat(), cursors, minTs).sort((a, b) => a.time.localeCompare(b.time));
+    console.log(`${collected.flat().length} unread, ${fresh.length} new`);
+
+    if (fresh.length > 0) {
       try {
-        return await collect(name, source, ctx);
+        result = await triage(root, cfg, fresh);
+        try {
+          result = await withContext(root, cfg, servers, fresh, result);
+        } catch (e) {
+          failures.push(`context: ${message(e)}`); // the first pass still stands
+        }
       } catch (e) {
-        failures.push(`source ${name}: ${message(e)}`);
-        return [];
+        failures.push(`llm: ${message(e)}`);
+        result = fallback(fresh);
       }
-    }),
-  );
-  const fresh = unseen(collected.flat(), cursors, minTs).sort((a, b) =>
-    a.time.localeCompare(b.time),
-  );
-  console.log(`${collected.flat().length} unread, ${fresh.length} new`);
+    }
+  } finally {
+    // Close Slack sessions before actions, which may run long-lived agents.
+    await Promise.all([...servers.values()].map((s) => s.close().catch(() => {})));
+  }
 
   let notified = false;
-  if (fresh.length > 0) {
-    let result: Triage;
-    try {
-      result = await triage(root, cfg, fresh);
-      try {
-        result = await withContext(root, cfg, ctx, fresh, result);
-      } catch (e) {
-        failures.push(`context: ${message(e)}`); // the first pass still stands
-      }
-    } catch (e) {
-      failures.push(`llm: ${message(e)}`);
-      result = fallback(fresh);
-    }
+  if (result) {
     const items = toItems(result, fresh);
     const priority = items.reduce<Priority>(
       (p, i) => (rank(i.priority) > rank(p) ? i.priority : p),
