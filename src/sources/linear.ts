@@ -11,7 +11,7 @@ const QUERY = `query ($since: DateTimeOrDuration!, $after: String) {
     pageInfo { hasNextPage endCursor }
     nodes {
       id type category createdAt readAt snoozedUntilAt
-      actor { name } botActor { id } externalUserActor { id }
+      actor { name email } botActor { id } externalUserActor { id }
       ... on IssueNotification { issue { identifier title url } ${COMMENT} }
       ... on ProjectNotification { project { name url } ${COMMENT} }
     }
@@ -33,7 +33,7 @@ export type Notification = {
   createdAt: string;
   readAt: string | null;
   snoozedUntilAt: string | null;
-  actor: { name: string } | null;
+  actor: { name: string; email?: string } | null;
   botActor: object | null;
   externalUserActor: object | null;
   issue?: { identifier: string; title: string; url: string };
@@ -107,6 +107,7 @@ export function notificationsToSignals(name: string, nodes: Notification[], now:
         ts: (Date.parse(n.createdAt) / 1000).toFixed(3),
         time: n.createdAt,
         author: n.actor!.name,
+        ...(n.actor!.email ? { email: n.actor!.email } : {}),
         text: `${n.type}: ${target.title}${c ? ` — ${c.body}` : ""}`,
         url: c?.url ?? target.url,
       },

@@ -53,7 +53,7 @@ type Call = (tool: string, args: Record<string, unknown>) => Promise<Record<stri
 export type SlackServer = {
   call: Call;
   cacheDir: string;
-  names: Names;
+  users: Users;
   close: () => Promise<void>;
 };
 
@@ -88,7 +88,7 @@ export async function openServer(name: string, ctx: CollectCtx): Promise<SlackSe
     if (result.isError) throw new Error(`${tool}: ${text}`);
     return parseCsv(text);
   };
-  return { call, cacheDir, names: readNames(cacheDir), close: () => client.close() };
+  return { call, cacheDir, users: readUsers(cacheDir), close: () => client.close() };
 }
 
 // Search indexes with a delay. Taking only settled results keeps the mentions cursor from
@@ -101,11 +101,15 @@ export async function collectSlack(
   ctx: CollectCtx,
   server: SlackServer,
 ): Promise<Signal[]> {
-  const { call, cacheDir, names } = server;
+  const { call, cacheDir, users } = server;
   const channels = readChannels(cacheDir);
+  // VIPs are never excluded.
+  const excluded: Excluded = (r) =>
+    source.exclude_channels.includes(r.Channel!) &&
+    !ctx.vips.has(users.get(r.UserID ?? "")?.email ?? "");
   const unreads = toSignals(
     name,
-    names,
+    users,
     await call("conversations_unreads", {
       include_messages: true,
       channel_types: source.channel_types,
@@ -113,12 +117,12 @@ export async function collectSlack(
       max_channels: source.max_channels,
       max_messages_per_channel: source.max_messages_per_channel,
     }),
-    source.exclude_channels,
+    excluded,
     source.url ? linker(source.url, channels) : undefined,
   );
   if (!source.thread_mentions) return unreads;
   const seen = new Set(unreads.map((s) => s.key));
-  const mentions = await threadMentions(name, server, ctx, channels, source.exclude_channels);
+  const mentions = await threadMentions(name, server, ctx, channels, excluded);
   return [...unreads, ...mentions.filter((s) => !seen.has(s.key))];
 }
 
@@ -128,10 +132,10 @@ export async function collectSlack(
  */
 async function threadMentions(
   name: string,
-  { call, names }: SlackServer,
+  { call, users }: SlackServer,
   ctx: CollectCtx,
   channels: Channel[],
-  exclude: string[],
+  excluded: Excluded,
 ): Promise<Signal[]> {
   const [mine] = await call("conversations_search_messages", { search_query: "from:me", limit: 1 });
   if (!mine?.UserID) return []; // search finds me by my own messages
@@ -150,13 +154,16 @@ async function threadMentions(
     const id = /^(\S+) \(/.exec(r.Channel ?? "")?.[1] ?? r.Channel ?? ""; // "C123 (#name)"
     return [{ ...r, Channel: channelNames.get(id) ?? id }]; // match the unread scan's channel names
   });
-  return toSignals(name, names, replies, exclude).map((s) => ({ ...s, stream: "thread-mentions" }));
+  return toSignals(name, users, replies, excluded).map((s) => ({
+    ...s,
+    stream: "thread-mentions",
+  }));
 }
 
 /** Each signal's thread plus the channel's recent messages, so triage can understand it. */
 export async function slackContext(
   name: string,
-  { call, names }: SlackServer,
+  { call, users }: SlackServer,
   signals: Signal[],
 ): Promise<Signal[][]> {
   const out: Signal[][] = [];
@@ -167,7 +174,7 @@ export async function slackContext(
       limit: "30",
     });
     const recent = await call("conversations_history", { channel_id: s.channel, limit: "15" });
-    out.push(toSignals(name, names, [...recent, ...thread], []));
+    out.push(toSignals(name, users, [...recent, ...thread]));
   }
   return out;
 }
@@ -175,26 +182,32 @@ export async function slackContext(
 type Channel = { id: string; name: string };
 
 /** The server's channel cache, written on its first sync. */
-function readChannels(cacheDir: string): Channel[] {
+export function readChannels(cacheDir: string): Channel[] {
   const path = join(cacheDir, "channels_cache_v2.json");
   return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as Channel[]) : [];
 }
 
-/** User id → profile display name, from the server's users cache. Message rows only carry
- * the handle and real name, and handles are often opaque. */
-type Names = Map<string, string>;
+/** User id → profile display name and email, from the server's users cache. Message rows
+ * only carry the handle and real name, and handles are often opaque. */
+type Users = Map<string, { name?: string; email?: string }>;
 
-function readNames(cacheDir: string): Names {
+export function readUsers(cacheDir: string): Users {
   const path = join(cacheDir, "users_cache.json");
   if (!existsSync(path)) return new Map();
   const users = JSON.parse(readFileSync(path, "utf8")) as {
     id: string;
-    profile?: { display_name?: string };
+    profile?: { display_name?: string; email?: string };
   }[];
   return new Map(
-    users.flatMap((u) => (u.profile?.display_name ? [[u.id, u.profile.display_name]] : [])),
+    users.map((u) => [
+      u.id,
+      { name: u.profile?.display_name || undefined, email: u.profile?.email?.toLowerCase() },
+    ]),
   );
 }
+
+type Row = Record<string, string>;
+type Excluded = (row: Row) => boolean;
 
 type Link = (channel: string, ts: string, thread?: string) => string | undefined;
 
@@ -219,14 +232,15 @@ function linker(base: string, channels: Channel[]): Link {
 
 export function toSignals(
   name: string,
-  names: Names,
-  rows: Record<string, string>[],
-  exclude: string[],
+  users: Users,
+  rows: Row[],
+  excluded: Excluded = () => false,
   link?: Link,
 ): Signal[] {
   return rows
-    .filter((r) => r.MsgID && r.Channel && !exclude.includes(r.Channel))
+    .filter((r) => r.MsgID && r.Channel && !excluded(r))
     .map((r) => {
+      const user = users.get(r.UserID ?? "");
       const thread = r.ThreadTs && r.ThreadTs !== r.MsgID ? r.ThreadTs : undefined;
       const url = r.Permalink || link?.(r.Channel!, r.MsgID!, thread); // search rows carry one
       return {
@@ -236,13 +250,8 @@ export function toSignals(
         channel: r.Channel!,
         ts: r.MsgID!,
         time: r.Time ?? "",
-        author:
-          names.get(r.UserID ?? "") ||
-          r.RealName ||
-          r.UserName ||
-          r.BotName ||
-          r.UserID ||
-          "unknown",
+        author: user?.name || r.RealName || r.UserName || r.BotName || r.UserID || "unknown",
+        ...(user?.email ? { email: user.email } : {}),
         text: r.Text ?? "",
         ...(thread ? { thread } : {}),
         ...(url ? { url } : {}),

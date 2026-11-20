@@ -65,6 +65,7 @@ const line = (cfg: Config, s: Signal, extra: Record<string, string>) =>
     author: s.author,
     time: s.time,
     ...(s.thread ? { in_thread: true } : {}),
+    ...(s.floor ? { min_priority: s.floor } : {}),
     text: s.text.length > cfg.max_text ? `${s.text.slice(0, cfg.max_text)}…` : s.text,
   });
 
@@ -87,6 +88,11 @@ export function buildPrompt(
     ...(afterHours
       ? [
           `## After hours\n\nIt is outside my work hours. The title and summary cover only items at ${afterHours} priority or higher; everything else waits for my next work-hours summary. Rate and list every item as usual.`,
+        ]
+      : []),
+    ...(signals.some((s) => s.floor)
+      ? [
+          "## Minimum priorities\n\nMessages with a min_priority come from people or channels I always want to hear about. Put each in an item rated at least that priority, and include it in the summary.",
         ]
       : []),
     `## Categories\n\n${categories.join("\n")}`,
@@ -124,11 +130,14 @@ export function parseOutput(
     value = out.structured_output ?? extractJson(out.result ?? "");
   } else value = extractJson(stdout);
   const t = schema.parse(value);
-  const lines = t.summary.length > 1 ? t.summary.map((l) => `• ${l}`) : t.summary;
-  return { ...t, title: clip(t.title, 100), summary: clip(lines.join("\n"), 900) };
+  return { ...t, title: clip(t.title, 100), summary: joinSummary(t.summary) };
 }
 
-const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+export const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+
+export function joinSummary(lines: string[]): string {
+  return clip((lines.length > 1 ? lines.map((l) => `• ${l}`) : lines).join("\n"), 900);
+}
 
 export async function triage(
   root: string,

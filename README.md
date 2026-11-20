@@ -62,17 +62,33 @@ Each clone is configured separately:
 
 Sources are grouped by kind, then keyed by a name such as the workspace's. The name sets the source's env prefix (`SLACK_<NAME>_`, `LINEAR_<NAME>_`, `JIRA_<NAME>_`), so keep it to lowercase letters and digits. Names are unique per kind, and elsewhere a source is `kind/name`, e.g. `slack/acme` in `actions.<name>.when.sources`.
 
-| Kind     | Fields                                                                                                                                                                                                                        | Produces                                         |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `slack`  | `url` (workspace URL, enables message links), `channel_types` (`all`/`dm`/`group_dm`/`partner`/`internal`), `mentions_only`, `thread_mentions` (default true), `max_channels`, `max_messages_per_channel`, `exclude_channels` | unread messages, thread replies that mention you |
-| `github` | `repos: [owner/repo, …]`, `author` (default `@me`)                                                                                                                                                                            | PRs merged within `max_age`, via `gh`            |
-| `linear` | none                                                                                                                                                                                                                          | unread inbox assignments, mentions, and comments |
-| `jira`   | `url` (Jira Cloud site)                                                                                                                                                                                                       | comments and assignments on issues you follow    |
+| Kind     | Fields                                                                                                                                                                                                                                             | Produces                                         |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `slack`  | `url` (workspace URL, enables message links), `channel_types` (`all`/`dm`/`group_dm`/`partner`/`internal`), `mentions_only`, `thread_mentions` (default true), `max_channels`, `max_messages_per_channel`, `exclude_channels`, `priority_channels` | unread messages, thread replies that mention you |
+| `github` | `repos: [owner/repo, …]`, `author` (default `@me`)                                                                                                                                                                                                 | PRs merged within `max_age`, via `gh`            |
+| `linear` | none                                                                                                                                                                                                                                               | unread inbox assignments, mentions, and comments |
+| `jira`   | `url` (Jira Cloud site)                                                                                                                                                                                                                            | comments and assignments on issues you follow    |
 
 Linear and Jira keep only what a teammate asked of you, so tracker traffic that mirrors GitHub or Slack, which you watch directly, stays out:
 
 - `linear` reads your [inbox](https://linear.app/docs/inbox) and keeps unread, unsnoozed notifications in the assignments, mentions, and comments categories. It drops any caused by an integration, bot, or synced external user, so GitHub PR, review, and status events and synced GitHub or Slack comments never reach triage.
 - `jira` searches issues updated since the last run that you're assigned, reported, or watch. It keeps comments that mention you or land on an issue you're assigned or reported, plus assignments to you. App users (Automation, GitHub for Jira) and your own activity are dropped. Mentions on issues you don't watch are missed, since Jira has no public notifications API.
+
+## VIPs and priority channels
+
+```yaml
+# triage.local.yaml
+vips:
+    sam@acme.com: high
+    pat@acme.com: # empty means normal
+sources:
+    slack:
+        acme: { priority_channels: { incidents: high, deploys: normal } }
+```
+
+A message from a VIP, matched by email in any source, or in a priority channel always reaches the summary at no less than the set priority (`low`, `normal`, or `high`). The code enforces this after the LLM, which is also told about it: an item rated lower is raised, and a message the LLM skipped becomes its own item. Raised items count toward `notify.min_priority`, actions, and the after-hours threshold, so a `high` VIP notifies overnight and a `normal` one waits for the morning summary. VIPs skip `exclude_channels`.
+
+Both apply only to messages a source collects. With `mentions_only` or `channel_types`, or past `max_channels`, a priority channel's messages may never arrive. Jira shows an author's email only when their profile allows it, so a VIP may go unmatched there. `task doctor` warns about VIP emails and priority channels missing from the Slack caches.
 
 ## Token automation
 
@@ -101,7 +117,7 @@ All of these are gitignored or live in `.git`.
 
 1. Collect unread messages from every source, plus Slack thread replies that mention you, which the unread scan misses. Messages stay unread in Slack.
 2. Drop messages already handled, using per-channel cursors in `.state/cursors.json`, and messages older than `max_age`.
-3. One LLM call with no tools groups messages into items with a priority and category. If it flags up to three items at or above `notify.min_priority` as needing context, the collector fetches their Slack threads and recent channel messages read-only, and a second call triages again with them. The overall priority is the highest item's priority.
+3. Tag messages from `vips` and `priority_channels` with their minimum priority. One LLM call with no tools groups messages into items with a priority and category. If it flags up to three items at or above `notify.min_priority` as needing context, the collector fetches their Slack threads and recent channel messages read-only, and a second call triages again with them. Items are raised to their messages' minimum priorities. The overall priority is the highest item's priority.
 4. If it reaches `notify.min_priority`, run `tell notify` with `notify.args[priority]`. Emergency priority repeats every `retry` until acknowledged or `expire`.
 5. Run matching actions, then advance the cursors.
 

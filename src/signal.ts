@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import type { Priority } from "./config";
 
 /** One message or event from a source. `ts` orders signals within a channel. */
 export type Signal = {
@@ -10,12 +11,16 @@ export type Signal = {
   ts: string;
   time: string;
   author: string;
+  /** Author's email when the source exposes it; matches `vips`. */
+  email?: string;
   text: string;
   thread?: string;
   /** Cursor stream within the source when it differs from `channel`. */
   stream?: string;
   /** Link to open the signal at its source. */
   url?: string;
+  /** Minimum priority from `vips` or `priority_channels`, set after collection. */
+  floor?: Priority;
 };
 
 /** The configured source a signal came from, as kind/name, e.g. slack/acme. */
@@ -29,6 +34,8 @@ export type CollectCtx = {
   stateDir: string;
   env: Record<string, string | undefined>;
   since: string;
+  /** Lowercased VIP emails, which skip a source's exclusions. */
+  vips: Set<string>;
 };
 
 /** Compares decimal timestamps exactly; Number() would lose Slack's microsecond digits. */

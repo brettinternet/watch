@@ -9,7 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import { type Config, loadConfig, sourceIds } from "./config";
 import { jiraAuth, jiraGet } from "./sources/jira";
 import { linearKey, linearQuery } from "./sources/linear";
-import { serverEnv } from "./sources/slack";
+import { readChannels, readUsers, serverEnv } from "./sources/slack";
 
 const root = resolve(import.meta.dir, "..");
 let failed = false;
@@ -149,6 +149,36 @@ if (Object.keys(sources?.github ?? {}).length) {
   const gh = run(["gh", "auth", "status"]);
   if (gh.code === 0) report("ok", "gh", "authenticated");
   else report("fail", "gh", gh.out.split("\n")[0] ?? `exit ${gh.code}`);
+}
+
+// VIPs and priority channels, checked against the Slack caches the last run synced
+const slackCache = (name: string) => join(root, ".state", "slack", name);
+const slackNames = Object.keys(sources?.slack ?? {});
+const vips = Object.keys(cfg?.vips ?? {});
+if (vips.length && slackNames.length) {
+  const emails = new Set(
+    slackNames.flatMap((n) => [...readUsers(slackCache(n)).values()].flatMap((u) => u.email ?? [])),
+  );
+  const unknown = vips.filter((e) => !emails.has(e));
+  if (!emails.size)
+    report("warn", "vips", "not checked; no Slack users cache before the first run");
+  else if (unknown.length)
+    report(
+      "warn",
+      "vips",
+      `not in any Slack workspace (typo, or Linear/Jira only): ${unknown.join(", ")}`,
+    );
+  else report("ok", "vips", `${vips.length} found in Slack`);
+}
+for (const name of slackNames) {
+  const wanted = Object.keys(sources!.slack[name]!.priority_channels);
+  if (!wanted.length) continue;
+  const label = `slack/${name} priority_channels`;
+  const known = new Set(readChannels(slackCache(name)).map((c) => c.name.replace(/^#/, "")));
+  const unknown = wanted.filter((c) => !known.has(c));
+  if (!known.size) report("warn", label, "not checked; no channel cache before the first run");
+  else if (unknown.length) report("warn", label, `unknown: ${unknown.join(", ")}`);
+  else report("ok", label, wanted.join(", "));
 }
 
 // State

@@ -15,6 +15,18 @@ const Duration = z
 
 export const DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
 
+/** Minimum priority for a VIP or channel. Empty means normal; emergency would page on every message. */
+const Floor = z
+  .enum(["low", "normal", "high"])
+  .nullable()
+  .transform((p) => p ?? "normal");
+/** Keys normalized with `key`, so lookups need no case or prefix handling. */
+const floors = (keys: z.ZodString | z.ZodEmail, key: (k: string) => string) =>
+  z
+    .record(keys, Floor)
+    .default({})
+    .transform((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [key(k), v])));
+
 const Name = z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/, "use lowercase letters, digits, - or _");
 const Argv = z.array(z.string().min(1)).min(1);
 
@@ -27,6 +39,8 @@ const SlackSource = z
     max_channels: z.number().int().positive().default(30),
     max_messages_per_channel: z.number().int().positive().default(10),
     exclude_channels: z.array(z.string()).default([]),
+    // Channel name (with or without #) → minimum priority for its messages
+    priority_channels: floors(z.string().min(1), (k) => k.replace(/^#/, "")),
   })
   .strict();
 export type SlackSource = z.infer<typeof SlackSource>;
@@ -114,6 +128,8 @@ export const Config = z
       })
       .strict()
       .prefault({}),
+    // Email → minimum priority for messages from that person, in any source
+    vips: floors(z.email(), (k) => k.toLowerCase()),
     actions: z.record(Name, Action).default({}),
   })
   .strict();

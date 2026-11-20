@@ -2,7 +2,8 @@ import type { JiraSource } from "../config";
 import { credentials, fetchJson } from "../http";
 import type { CollectCtx, Signal } from "../signal";
 
-type User = { accountId: string; displayName: string; accountType: string };
+/** emailAddress is present only when the user's profile visibility allows it. */
+type User = { accountId: string; displayName: string; accountType: string; emailAddress?: string };
 
 export type Issue = {
   key: string;
@@ -108,6 +109,7 @@ export function issuesToSignals(
     ts: (Date.parse(at) / 1000).toFixed(3),
     time: new Date(Date.parse(at)).toISOString(),
     author: author.displayName,
+    ...(author.emailAddress ? { email: author.emailAddress } : {}),
     text,
     url: link,
   });

@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { type Item, matches, runAction } from "./actions";
+import { matches, runAction } from "./actions";
 import { type Config, inWorkHours, loadConfig, type Priority, rank, sourceIds } from "./config";
+import { floorOf, raised, toItems } from "./items";
 import { type Context, fallback, triage, type Triage } from "./llm";
 import { notify, tellArgv } from "./notify";
 import {
@@ -24,15 +25,6 @@ const CONTEXT_ITEMS = 3; // most flagged items per run that get Slack context an
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-function toItems(t: Triage, signals: Signal[]): Item[] {
-  return t.items.flatMap((i) => {
-    const matched = i.ids.flatMap((id) => signals[Number(id.slice(1)) - 1] ?? []);
-    return matched.length
-      ? [{ priority: i.priority, category: i.category, reason: i.reason, signals: matched }]
-      : [];
-  });
-}
-
 /**
  * Fetches Slack context for the most important items the LLM flagged at or above the notify
  * threshold and triages once more with it; otherwise returns `first`.
@@ -47,6 +39,13 @@ async function withContext(
 ): Promise<Triage> {
   const minPriority = afterHours ?? cfg.notify.min_priority;
   const wanted = first.items
+    .map((i) => ({
+      ...i,
+      priority: raised(
+        i.priority,
+        i.ids.flatMap((id) => fresh[Number(id.slice(1)) - 1] ?? []),
+      ),
+    }))
     .filter((i) => i.needs_context && rank(i.priority) >= rank(minPriority))
     .sort((a, b) => rank(b.priority) - rank(a.priority))
     .slice(0, CONTEXT_ITEMS)
@@ -112,7 +111,12 @@ async function main(dryRun: boolean): Promise<number> {
   const from = Math.min(now - cfg.max_age, lastWork);
   const minTs = String(Math.floor(from / 1000));
   const since = new Date(from).toISOString();
-  const ctx: CollectCtx = { stateDir, env: process.env, since };
+  const ctx: CollectCtx = {
+    stateDir,
+    env: process.env,
+    since,
+    vips: new Set(Object.keys(cfg.vips)),
+  };
 
   // One slack-mcp-server per source for the whole run: a single Slack session covers both
   // collection and the context pass, instead of re-authenticating between them.
@@ -152,7 +156,12 @@ async function main(dryRun: boolean): Promise<number> {
       }),
     );
     collectFailed = failures.length > 0;
-    fresh = unseen(collected.flat(), cursors, minTs).sort((a, b) => a.time.localeCompare(b.time));
+    fresh = unseen(collected.flat(), cursors, minTs)
+      .sort((a, b) => a.time.localeCompare(b.time))
+      .map((s) => {
+        const floor = floorOf(cfg, s);
+        return floor ? { ...s, floor } : s;
+      });
     console.log(`${collected.flat().length} unread, ${fresh.length} new`);
 
     if (fresh.length > 0) {
@@ -175,19 +184,19 @@ async function main(dryRun: boolean): Promise<number> {
 
   let notified = false;
   if (result) {
-    const items = toItems(result, fresh);
+    const { title, summary, items } = toItems(result, fresh);
     const priority = items.reduce<Priority>(
       (p, i) => (rank(i.priority) > rank(p) ? i.priority : p),
       "none",
     );
-    console.log(`\n[${priority}] ${result.title}\n${result.summary}\n`);
+    console.log(`\n[${priority}] ${title}\n${summary}\n`);
     for (const i of items)
       console.log(`- ${i.priority} ${i.category} (${i.signals.length}): ${i.reason}`);
 
     if (rank(priority) >= rank(minPriority)) {
       // Link the newest linkable message of the first top-priority item.
       const url = items.find((i) => i.priority === priority)?.signals.findLast((s) => s.url)?.url;
-      const argv = tellArgv(root, cfg.notify, priority, result.title, result.summary, url);
+      const argv = tellArgv(root, cfg.notify, priority, title, summary, url);
       if (dryRun) console.log(`\nwould run: ${argv.slice(0, -1).join(" ")} <summary>`);
       else {
         const { delivered, detail } = await notify(argv);

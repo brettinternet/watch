@@ -7,12 +7,16 @@ sources:
   slack:
     acme: { url: https://acme.slack.com } # task setup:slack -- acme
     # side: { channel_types: dm, mentions_only: true }
+    # acme: { url: https://acme.slack.com, priority_channels: { incidents: high } }
   # github:
   #   acme: { repos: [owner/repo] }
   # linear:
   #   acme: {} # LINEAR_ACME_API_KEY
   # jira:
   #   acme: { url: https://acme.atlassian.net } # JIRA_ACME_EMAIL, JIRA_ACME_API_TOKEN
+# Always include messages from these people, at no less than this priority (empty means normal).
+# vips:
+#   sam@acme.com: high
 # actions:
 #   investigate:
 #     when: { categories: [incident], min_priority: high }
