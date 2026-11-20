@@ -12,7 +12,7 @@ jobs:
     missed: skip
     overlap: skip
     noop_exit_code: 78
-    run: [mise, exec, --, task, --exit-code, triage] # pass 78 through, not task's 201
+    run: [./scripts/triage]
     on_failure: [./scripts/on-failure]
 
   update:

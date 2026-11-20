@@ -22,7 +22,7 @@ tasks:
 
   triage:
     desc: Collect, summarize, and notify once; `task triage -- --dry-run` previews without side effects
-    cmd: "{{.ENV_RUN}} -- bun src/main.ts {{.CLI_ARGS}}"
+    cmd: ./scripts/triage {{.CLI_ARGS}}
 
   doctor:
     desc: Check setup, credentials, and scheduler state without side effects

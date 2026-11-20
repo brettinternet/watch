@@ -1,0 +1,6 @@
+#!/bin/sh
+# Run triage once with the Varlock environment. Exit codes pass through unchanged
+# (78 is a Noon noop), without go-task's "Failed to run task" line.
+set -eu
+cd "$(dirname "$0")/.."
+exec mise exec -- varlock run -p "$PWD/.env.schema" -p "$PWD/.env.local" -- bun src/main.ts "$@"
