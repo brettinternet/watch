@@ -2,12 +2,17 @@
 # Deep-merges over triage.yaml (lists replace). See README.
 llm:
   agent: claude # claude | pi | command
+# Grouped by kind, then named; the name sets the env prefix, e.g. SLACK_ACME_.
 sources:
-  acme: { kind: slack, url: https://acme.slack.com } # name sets the SLACK_ACME_ env prefix; task setup:slack -- acme
-  # side: { kind: slack, channel_types: dm, mentions_only: true }
-  # prs: { kind: github, repos: [owner/repo] }
-  # linear: { kind: linear } # LINEAR_LINEAR_API_KEY
-  # jira: { kind: jira, url: https://acme.atlassian.net } # JIRA_JIRA_EMAIL, JIRA_JIRA_API_TOKEN
+  slack:
+    acme: { url: https://acme.slack.com } # task setup:slack -- acme
+    # side: { channel_types: dm, mentions_only: true }
+  # github:
+  #   acme: { repos: [owner/repo] }
+  # linear:
+  #   acme: {} # LINEAR_ACME_API_KEY
+  # jira:
+  #   acme: { url: https://acme.atlassian.net } # JIRA_ACME_EMAIL, JIRA_ACME_API_TOKEN
 # actions:
 #   investigate:
 #     when: { categories: [incident], min_priority: high }

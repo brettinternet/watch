@@ -6,7 +6,7 @@
  */
 import { existsSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { type Config, loadConfig } from "./config";
+import { type Config, loadConfig, sourceIds } from "./config";
 import { jiraAuth, jiraGet } from "./sources/jira";
 import { linearKey, linearQuery } from "./sources/linear";
 import { serverEnv } from "./sources/slack";
@@ -41,7 +41,7 @@ async function slackAuth(name: string) {
   try {
     env = serverEnv(name, process.env, "");
   } catch (e) {
-    return report("fail", `slack ${name}`, (e as Error).message);
+    return report("fail", `slack/${name}`, (e as Error).message);
   }
   const xoxp = env.SLACK_MCP_XOXP_TOKEN;
   // Bun's fetch cannot reproduce slack-mcp-server's custom TLS fingerprint. Don't risk session
@@ -49,7 +49,7 @@ async function slackAuth(name: string) {
   if (!xoxp)
     return report(
       "warn",
-      `slack ${name}`,
+      `slack/${name}`,
       "xoxc/xoxd not live-tested; auth.test cannot use slack-mcp-server's custom TLS",
     );
   try {
@@ -64,10 +64,10 @@ async function slackAuth(name: string) {
       user?: string;
       team?: string;
     };
-    if (body.ok) report("ok", `slack ${name}`, `${body.user} @ ${body.team}`);
-    else report("fail", `slack ${name}`, `${body.error}; re-run: task setup:slack -- ${name}`);
+    if (body.ok) report("ok", `slack/${name}`, `${body.user} @ ${body.team}`);
+    else report("fail", `slack/${name}`, `${body.error}; re-run: task setup:slack -- ${name}`);
   } catch (e) {
-    report("fail", `slack ${name}`, `auth.test: ${(e as Error).message}`);
+    report("fail", `slack/${name}`, `auth.test: ${(e as Error).message}`);
   }
 }
 
@@ -110,50 +110,42 @@ else report("fail", "tell.yaml", "missing, so notifications go to stderr; run ta
 let cfg: Config | undefined;
 try {
   cfg = loadConfig(root);
-  const names = Object.keys(cfg.sources);
+  const names = sourceIds(cfg);
   if (names.length) report("ok", "config", `llm ${cfg.llm.agent}; sources ${names.join(", ")}`);
   else report("fail", "config", "no sources; add one to triage.local.yaml");
 } catch (e) {
   report("fail", "config", (e as Error).message);
 }
 
-const kinds = new Set(Object.values(cfg?.sources ?? {}).map((s) => s.kind));
+const sources = cfg?.sources;
 const tools = ["tell", "noon"];
 if (cfg) tools.push(cfg.llm.agent === "command" ? cfg.llm.command![0]! : cfg.llm.agent);
-if (kinds.has("slack")) tools.push("slack-mcp-server");
-if (kinds.has("github")) tools.push("gh");
+if (Object.keys(sources?.slack ?? {}).length) tools.push("slack-mcp-server");
+if (Object.keys(sources?.github ?? {}).length) tools.push("gh");
 const missing = tools.filter((t) => !Bun.which(t));
 if (missing.length) report("fail", "tools", `not on PATH: ${missing.join(", ")}`);
 else report("ok", "tools", tools.join(", "));
 
-await Promise.all(
-  Object.entries(cfg?.sources ?? {}).flatMap(([name, s]) => {
-    if (s.kind === "slack") return [slackAuth(name)];
-    if (s.kind === "linear")
-      return [
-        whoami(`linear ${name}`, async () => {
-          const { viewer } = await linearQuery<{ viewer: { name: string } }>(
-            linearKey(name, process.env),
-            "{ viewer { name } }",
-          );
-          return viewer.name;
-        }),
-      ];
-    if (s.kind === "jira")
-      return [
-        whoami(`jira ${name}`, async () => {
-          const me = await jiraGet<{ displayName: string }>(
-            s,
-            jiraAuth(name, process.env),
-            "/rest/api/2/myself",
-          );
-          return `${me.displayName} @ ${s.url}`;
-        }),
-      ];
-    return [];
-  }),
-);
-if (kinds.has("github")) {
+await Promise.all([
+  ...Object.keys(sources?.slack ?? {}).map(slackAuth),
+  ...Object.keys(sources?.linear ?? {}).map((name) =>
+    whoami(`linear/${name}`, async () => {
+      const { viewer } = await linearQuery<{ viewer: { name: string } }>(
+        linearKey(name, process.env),
+        "{ viewer { name } }",
+      );
+      return viewer.name;
+    }),
+  ),
+  ...Object.entries(sources?.jira ?? {}).map(([name, s]) =>
+    whoami(`jira/${name}`, async () => {
+      const auth = jiraAuth(name, process.env);
+      const me = await jiraGet<{ displayName: string }>(s, auth, "/rest/api/2/myself");
+      return `${me.displayName} @ ${s.url}`;
+    }),
+  ),
+]);
+if (Object.keys(sources?.github ?? {}).length) {
   const gh = run(["gh", "auth", "status"]);
   if (gh.code === 0) report("ok", "gh", "authenticated");
   else report("fail", "gh", gh.out.split("\n")[0] ?? `exit ${gh.code}`);

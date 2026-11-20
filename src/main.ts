@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { type Item, matches, runAction } from "./actions";
-import { type Config, inWorkHours, loadConfig, type Priority, rank } from "./config";
+import { type Config, inWorkHours, loadConfig, type Priority, rank, sourceIds } from "./config";
 import { type Context, fallback, triage, type Triage } from "./llm";
 import { notify, tellArgv } from "./notify";
 import {
@@ -82,7 +82,7 @@ async function withContext(
 async function main(dryRun: boolean): Promise<number> {
   const root = resolve(import.meta.dir, "..");
   const cfg: Config = loadConfig(root);
-  if (Object.keys(cfg.sources).length === 0)
+  if (sourceIds(cfg).length === 0)
     throw new Error("no sources configured; add one to triage.local.yaml");
 
   const now = Date.now();
@@ -121,17 +121,32 @@ async function main(dryRun: boolean): Promise<number> {
   let result: Triage | undefined;
   let collectFailed = false;
   try {
-    const collected = await Promise.all(
-      Object.entries(cfg.sources).map(async ([name, source]) => {
-        try {
-          if (source.kind === "github") return await collectGithub(name, source, ctx);
-          if (source.kind === "linear") return await collectLinear(name, ctx);
-          if (source.kind === "jira") return await collectJira(name, source, ctx);
+    const { slack, github, linear, jira } = cfg.sources;
+    const collectors: [string, () => Promise<Signal[]>][] = [
+      ...Object.entries(slack).map(([name, source]) => [
+        `slack/${name}`,
+        async () => {
           const server = await openServer(name, ctx);
           servers.set(name, server);
-          return await collectSlack(name, source, ctx, server);
+          return collectSlack(name, source, ctx, server);
+        },
+      ]),
+      ...Object.entries(github).map(([name, source]) => [
+        `github/${name}`,
+        () => collectGithub(name, source, ctx),
+      ]),
+      ...Object.keys(linear).map((name) => [`linear/${name}`, () => collectLinear(name, ctx)]),
+      ...Object.entries(jira).map(([name, source]) => [
+        `jira/${name}`,
+        () => collectJira(name, source, ctx),
+      ]),
+    ] as [string, () => Promise<Signal[]>][];
+    const collected = await Promise.all(
+      collectors.map(async ([id, collect]) => {
+        try {
+          return await collect();
         } catch (e) {
-          failures.push(`source ${name}: ${message(e)}`);
+          failures.push(`source ${id}: ${message(e)}`);
           return [];
         }
       }),

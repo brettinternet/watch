@@ -20,7 +20,6 @@ const Argv = z.array(z.string().min(1)).min(1);
 
 const SlackSource = z
   .object({
-    kind: z.literal("slack"),
     url: z.url().optional(), // workspace URL, e.g. https://acme.slack.com; enables message links
     channel_types: z.enum(["all", "dm", "group_dm", "partner", "internal"]).default("all"),
     mentions_only: z.boolean().default(false),
@@ -34,32 +33,34 @@ export type SlackSource = z.infer<typeof SlackSource>;
 
 const GithubSource = z
   .object({
-    kind: z.literal("github"),
     repos: z.array(z.string().regex(/^[^/\s]+\/[^/\s]+$/, "use owner/repo")).min(1),
     author: z.string().min(1).default("@me"),
   })
   .strict();
 export type GithubSource = z.infer<typeof GithubSource>;
 
-const LinearSource = z.object({ kind: z.literal("linear") }).strict();
+const LinearSource = z.object({}).strict();
 
 const JiraSource = z
   .object({
-    kind: z.literal("jira"),
     url: z.url(), // Jira Cloud site, e.g. https://acme.atlassian.net
   })
   .strict();
 export type JiraSource = z.infer<typeof JiraSource>;
 
-const Source = z.discriminatedUnion("kind", [SlackSource, GithubSource, LinearSource, JiraSource]);
-export type Source = z.infer<typeof Source>;
+// No separators: a name is also the SLACK_<NAME>_ (LINEAR_, JIRA_) env prefix, which must not
+// overlap. Names are unique per kind, so one workspace can share a name across kinds.
+const SourceName = z.string().regex(/^[a-z][a-z0-9]{0,31}$/, "use lowercase letters and digits");
+const byName = <T extends z.ZodType>(source: T) => z.record(SourceName, source).default({});
+
+export const KINDS = ["slack", "github", "linear", "jira"] as const;
 
 const Action = z
   .object({
     when: z
       .object({
         categories: z.array(Name).min(1).optional(),
-        sources: z.array(Name).min(1).optional(),
+        sources: z.array(z.string()).min(1).optional(), // kind/name, e.g. slack/acme
         min_priority: Priority.default("high"),
       })
       .strict(),
@@ -104,14 +105,23 @@ export const Config = z
         args: z.partialRecord(Priority, z.array(z.string())).default({}),
       })
       .strict(),
-    // No separators: a name is also the SLACK_<NAME>_ (or LINEAR_, JIRA_) env prefix, which must not overlap.
     sources: z
-      .record(z.string().regex(/^[a-z][a-z0-9]{0,31}$/, "use lowercase letters and digits"), Source)
-      .default({}),
+      .object({
+        slack: byName(SlackSource),
+        github: byName(GithubSource),
+        linear: byName(LinearSource),
+        jira: byName(JiraSource),
+      })
+      .strict()
+      .prefault({}),
     actions: z.record(Name, Action).default({}),
   })
   .strict();
 export type Config = z.infer<typeof Config>;
+
+/** Every configured source as kind/name, e.g. slack/acme. */
+export const sourceIds = (cfg: Config) =>
+  KINDS.flatMap((kind) => Object.keys(cfg.sources[kind]).map((name) => `${kind}/${name}`));
 
 export function inWorkHours(work: Config["work_hours"], at: Date): boolean {
   if (!work) return true;
@@ -140,6 +150,13 @@ export function loadConfig(root: string): Config {
     if (!existsSync(path)) continue;
     raw = merge(raw, Bun.YAML.parse(readFileSync(path, "utf8")) ?? {});
   }
+  // Sources used to be keyed by name with a kind field.
+  const sources = isPlain(raw) && isPlain(raw.sources) ? raw.sources : {};
+  const flat = Object.entries(sources).filter(([, s]) => isPlain(s) && "kind" in s);
+  if (flat.length) {
+    const moves = flat.map(([n, s]) => `sources.${n} → sources.${(s as Plain).kind}.${n}`);
+    throw new Error(`group sources by kind and drop kind: ${moves.join(", ")}`);
+  }
   const parsed = Config.safeParse(raw);
   if (!parsed.success) {
     const issues = parsed.error.issues.map(
@@ -152,7 +169,8 @@ export function loadConfig(root: string): Config {
       if (!(c in parsed.data.categories)) throw new Error(`actions.${name}: unknown category ${c}`);
     }
     for (const s of action.when.sources ?? []) {
-      if (!(s in parsed.data.sources)) throw new Error(`actions.${name}: unknown source ${s}`);
+      if (!sourceIds(parsed.data).includes(s))
+        throw new Error(`actions.${name}: unknown source ${s}; use kind/name, e.g. slack/acme`);
     }
   }
   return parsed.data;

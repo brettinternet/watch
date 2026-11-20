@@ -43,11 +43,15 @@ Each clone is configured separately:
         agent: pi # default: claude
         args: [--model, sonnet]
     sources:
-        acme: { kind: slack }
-        side: { kind: slack, channel_types: dm, mentions_only: true }
-        prs: { kind: github, repos: [acme/api, acme/web] }
-        linear: { kind: linear }
-        jira: { kind: jira, url: https://acme.atlassian.net }
+        slack:
+            acme: {}
+            side: { channel_types: dm, mentions_only: true }
+        github:
+            acme: { repos: [acme/api, acme/web] }
+        linear:
+            acme: {}
+        jira:
+            acme: { url: https://acme.atlassian.net }
     ```
 
 4. Run `task setup:tell` to route this clone's notifications to Pushover in `.git/tell.yaml`.
@@ -56,7 +60,7 @@ Each clone is configured separately:
 
 ## Sources
 
-Each source has a name (the key) and a `kind`. The name labels its signals and, for Slack, is the `SLACK_<NAME>_` env prefix, so keep it to lowercase letters and digits.
+Sources are grouped by kind, then keyed by a name such as the workspace's. The name sets the source's env prefix (`SLACK_<NAME>_`, `LINEAR_<NAME>_`, `JIRA_<NAME>_`), so keep it to lowercase letters and digits. Names are unique per kind, and elsewhere a source is `kind/name`, e.g. `slack/acme` in `actions.<name>.when.sources`.
 
 | Kind     | Fields                                                                                                                                                                                                                        | Produces                                         |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
@@ -137,4 +141,4 @@ Message text is untrusted input. Give that agent read-only tools.
 
 ## Development
 
-`task test`, `task typecheck`, and `task triage -- --dry-run`. `task doctor` checks setup, credentials, and Noon and Tell readiness without side effects. It uses live Slack `auth.test` for `xoxp`; for `xoxc`/`xoxd` it warns that credentials were not live-tested rather than make a request without slack-mcp-server's custom TLS. Linear and Jira get a live read-only identity check. To add a source kind, add its schema to `src/config.ts`, a collector in `src/sources/` returning `Signal[]`, and a case in `collect()` in `src/main.ts`.
+`task test`, `task typecheck`, and `task triage -- --dry-run`. `task doctor` checks setup, credentials, and Noon and Tell readiness without side effects. It uses live Slack `auth.test` for `xoxp`; for `xoxc`/`xoxd` it warns that credentials were not live-tested rather than make a request without slack-mcp-server's custom TLS. Linear and Jira get a live read-only identity check. To add a source kind, add its schema to `src/config.ts`, a collector in `src/sources/` returning `Signal[]`, and an entry in `collectors` in `src/main.ts`.

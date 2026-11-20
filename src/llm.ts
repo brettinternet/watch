@@ -59,6 +59,7 @@ export type Context = { for: string; signal: Signal }[];
 const line = (cfg: Config, s: Signal, extra: Record<string, string>) =>
   JSON.stringify({
     ...extra,
+    kind: s.kind,
     source: s.source,
     channel: s.channel,
     author: s.author,

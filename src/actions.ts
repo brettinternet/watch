@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { type Action, type Priority, rank } from "./config";
-import type { Signal } from "./signal";
+import { type Signal, sourceId } from "./signal";
 
 export type Item = { priority: Priority; category: string; reason: string; signals: Signal[] };
 
@@ -9,7 +9,7 @@ export function matches(action: Action, item: Item): boolean {
   return (
     rank(item.priority) >= rank(min_priority) &&
     (!categories || categories.includes(item.category)) &&
-    (!sources || item.signals.some((s) => sources.includes(s.source)))
+    (!sources || item.signals.some((s) => sources.includes(sourceId(s))))
   );
 }
 

@@ -38,3 +38,9 @@ test("a thread mention found late by search is not hidden by its channel's curso
   expect(unseen([reply], cursors, "0")).toEqual([reply]);
   expect(unseen([reply], advance(cursors, [reply]), "0")).toEqual([]);
 });
+
+test("sources sharing a name across kinds keep separate cursors", () => {
+  const linear = { ...sig("ENG-7", "1700000000.000200"), kind: "linear" };
+  const jira = { ...sig("ENG-7", "1700000000.000100"), kind: "jira" };
+  expect(unseen([jira], advance({}, [linear]), "0")).toEqual([jira]);
+});

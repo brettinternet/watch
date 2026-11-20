@@ -18,7 +18,10 @@ export type Signal = {
   url?: string;
 };
 
-/** source → stream (channel by default) → highest ts already handled. */
+/** The configured source a signal came from, as kind/name, e.g. slack/acme. */
+export const sourceId = (s: Signal) => `${s.kind}/${s.source}`;
+
+/** kind/name source → stream (channel by default) → highest ts already handled. */
 export type Cursors = Record<string, Record<string, string>>;
 
 /** Shared context passed to every source collector. `since` is an ISO lower bound for fetches. */
@@ -42,7 +45,7 @@ export function compareTs(a: string, b: string): number {
 /** Signals not yet handled and no older than `minTs`. */
 export function unseen(signals: Signal[], cursors: Cursors, minTs: string): Signal[] {
   return signals.filter((s) => {
-    const cursor = cursors[s.source]?.[s.stream ?? s.channel];
+    const cursor = cursors[sourceId(s)]?.[s.stream ?? s.channel];
     return compareTs(s.ts, minTs) >= 0 && (cursor === undefined || compareTs(s.ts, cursor) > 0);
   });
 }
@@ -50,7 +53,7 @@ export function unseen(signals: Signal[], cursors: Cursors, minTs: string): Sign
 export function advance(cursors: Cursors, signals: Signal[]): Cursors {
   const next: Cursors = structuredClone(cursors);
   for (const s of signals) {
-    const channels = (next[s.source] ??= {});
+    const channels = (next[sourceId(s)] ??= {});
     const stream = s.stream ?? s.channel;
     const cursor = channels[stream];
     if (cursor === undefined || compareTs(s.ts, cursor) > 0) channels[stream] = s.ts;

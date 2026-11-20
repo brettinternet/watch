@@ -10,7 +10,7 @@ import { serverEnv } from "./sources/slack";
 
 const primary = process.argv[2]!;
 const cfg = loadConfig(primary);
-const slack = Object.entries(cfg.sources).flatMap(([n, s]) => (s.kind === "slack" ? [n] : []));
+const slack = Object.keys(cfg.sources.slack);
 const name = process.argv[3] ?? slack[0];
 if (!name || !slack.includes(name))
   throw new Error(`no slack source ${name ?? ""} in triage.local.yaml (have: ${slack.join(", ")})`);
