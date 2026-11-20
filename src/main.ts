@@ -64,7 +64,7 @@ async function withContext(
     const mine = wanted.filter((w) => w.signal.source === source);
     const fetched = await slackContext(
       source,
-      server.call,
+      server,
       mine.map((w) => w.signal),
     );
     mine.forEach((w, n) => {

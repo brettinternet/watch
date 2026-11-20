@@ -50,7 +50,12 @@ type Call = (tool: string, args: Record<string, unknown>) => Promise<Record<stri
 
 /** A workspace's running server, reused for collection and context so one triage run opens
  * one Slack session per source instead of re-authenticating for the context pass. */
-export type SlackServer = { call: Call; cacheDir: string; close: () => Promise<void> };
+export type SlackServer = {
+  call: Call;
+  cacheDir: string;
+  names: Names;
+  close: () => Promise<void>;
+};
 
 /** Starts this workspace's server, which only exposes read tools. Caller must `close()` it. */
 export async function openServer(name: string, ctx: CollectCtx): Promise<SlackServer> {
@@ -83,7 +88,7 @@ export async function openServer(name: string, ctx: CollectCtx): Promise<SlackSe
     if (result.isError) throw new Error(`${tool}: ${text}`);
     return parseCsv(text);
   };
-  return { call, cacheDir, close: () => client.close() };
+  return { call, cacheDir, names: readNames(cacheDir), close: () => client.close() };
 }
 
 // Search indexes with a delay. Taking only settled results keeps the mentions cursor from
@@ -96,10 +101,11 @@ export async function collectSlack(
   ctx: CollectCtx,
   server: SlackServer,
 ): Promise<Signal[]> {
-  const { call, cacheDir } = server;
+  const { call, cacheDir, names } = server;
   const channels = readChannels(cacheDir);
   const unreads = toSignals(
     name,
+    names,
     await call("conversations_unreads", {
       include_messages: true,
       channel_types: source.channel_types,
@@ -112,7 +118,7 @@ export async function collectSlack(
   );
   if (!source.thread_mentions) return unreads;
   const seen = new Set(unreads.map((s) => s.key));
-  const mentions = await threadMentions(name, call, ctx, channels, source.exclude_channels);
+  const mentions = await threadMentions(name, server, ctx, channels, source.exclude_channels);
   return [...unreads, ...mentions.filter((s) => !seen.has(s.key))];
 }
 
@@ -122,7 +128,7 @@ export async function collectSlack(
  */
 async function threadMentions(
   name: string,
-  call: Call,
+  { call, names }: SlackServer,
   ctx: CollectCtx,
   channels: Channel[],
   exclude: string[],
@@ -137,20 +143,20 @@ async function threadMentions(
     filter_date_after: after,
     limit: 100,
   });
-  const names = new Map(channels.map((c) => [c.id, c.name]));
+  const channelNames = new Map(channels.map((c) => [c.id, c.name]));
   const settled = Date.now() / 1000 - SEARCH_LAG_S;
   const replies = rows.flatMap((r) => {
     if (!r.ThreadTs || r.ThreadTs === r.MsgID || Number(r.MsgID) > settled) return [];
     const id = /^(\S+) \(/.exec(r.Channel ?? "")?.[1] ?? r.Channel ?? ""; // "C123 (#name)"
-    return [{ ...r, Channel: names.get(id) ?? id }]; // match the unread scan's channel names
+    return [{ ...r, Channel: channelNames.get(id) ?? id }]; // match the unread scan's channel names
   });
-  return toSignals(name, replies, exclude).map((s) => ({ ...s, stream: "thread-mentions" }));
+  return toSignals(name, names, replies, exclude).map((s) => ({ ...s, stream: "thread-mentions" }));
 }
 
 /** Each signal's thread plus the channel's recent messages, so triage can understand it. */
 export async function slackContext(
   name: string,
-  call: Call,
+  { call, names }: SlackServer,
   signals: Signal[],
 ): Promise<Signal[][]> {
   const out: Signal[][] = [];
@@ -161,7 +167,7 @@ export async function slackContext(
       limit: "30",
     });
     const recent = await call("conversations_history", { channel_id: s.channel, limit: "15" });
-    out.push(toSignals(name, [...recent, ...thread], []));
+    out.push(toSignals(name, names, [...recent, ...thread], []));
   }
   return out;
 }
@@ -172,6 +178,22 @@ type Channel = { id: string; name: string };
 function readChannels(cacheDir: string): Channel[] {
   const path = join(cacheDir, "channels_cache_v2.json");
   return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as Channel[]) : [];
+}
+
+/** User id → profile display name, from the server's users cache. Message rows only carry
+ * the handle and real name, and handles are often opaque. */
+type Names = Map<string, string>;
+
+function readNames(cacheDir: string): Names {
+  const path = join(cacheDir, "users_cache.json");
+  if (!existsSync(path)) return new Map();
+  const users = JSON.parse(readFileSync(path, "utf8")) as {
+    id: string;
+    profile?: { display_name?: string };
+  }[];
+  return new Map(
+    users.flatMap((u) => (u.profile?.display_name ? [[u.id, u.profile.display_name]] : [])),
+  );
 }
 
 type Link = (channel: string, ts: string, thread?: string) => string | undefined;
@@ -197,6 +219,7 @@ function linker(base: string, channels: Channel[]): Link {
 
 export function toSignals(
   name: string,
+  names: Names,
   rows: Record<string, string>[],
   exclude: string[],
   link?: Link,
@@ -213,7 +236,13 @@ export function toSignals(
         channel: r.Channel!,
         ts: r.MsgID!,
         time: r.Time ?? "",
-        author: r.RealName || r.UserName || r.BotName || r.UserID || "unknown",
+        author:
+          names.get(r.UserID ?? "") ||
+          r.RealName ||
+          r.UserName ||
+          r.BotName ||
+          r.UserID ||
+          "unknown",
         text: r.Text ?? "",
         ...(thread ? { thread } : {}),
         ...(url ? { url } : {}),
