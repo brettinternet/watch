@@ -1,6 +1,6 @@
 # watch
 
-A [Noon](https://github.com/brettinternet/noon) job collects signals from each configured source — unread Slack messages through [slack-mcp-server](https://github.com/korotovsky/slack-mcp-server), recently merged GitHub PRs through `gh` — then Claude or Pi groups and prioritizes them, [Tell](https://github.com/brettinternet/tell) sends one Pushover notification at the matching priority, and optional actions run for matching items, such as starting an agent to investigate an incident.
+A [Noon](https://github.com/brettinternet/noon) job collects signals from each configured source — unread Slack messages through [slack-mcp-server](https://github.com/korotovsky/slack-mcp-server), recently merged GitHub PRs through `gh`, and Linear and Jira asks from teammates — then Claude or Pi groups and prioritizes them, [Tell](https://github.com/brettinternet/tell) sends one Pushover notification at the matching priority, and optional actions run for matching items, such as starting an agent to investigate an incident.
 
 ```mermaid
 flowchart TD
@@ -8,7 +8,8 @@ flowchart TD
   main --> s1["slack: acme<br/>own SLACK_ACME_* only"]
   main --> s2["slack: side"]
   main --> g1["github: prs<br/>gh, watched repos"]
-  s1 & s2 & g1 --> dedupe["drop handled (cursors)<br/>+ older than max_age"]
+  main --> t1["linear / jira<br/>API key, own LINEAR_/JIRA_* only"]
+  s1 & s2 & g1 & t1 --> dedupe["drop handled (cursors)<br/>+ older than max_age"]
   dedupe --> llm["one LLM call, no tools<br/>group → priority + category<br/>(text is untrusted)"]
   llm --> prio{"≥ notify.min_priority?"}
   prio -- yes --> tell["tell notify<br/>--pushover-priority P"] --> push["Pushover"]
@@ -31,6 +32,8 @@ Each clone is configured separately:
     PUSHOVER_USER=...
     ```
 
+    For a `linear` or `jira` source, add its API credentials under the same per-source prefix: `LINEAR_<NAME>_API_KEY` (a [personal API key](https://linear.app/settings/account/security)), or `JIRA_<NAME>_EMAIL` and `JIRA_<NAME>_API_TOKEN` (an [Atlassian API token](https://id.atlassian.com/manage-profile/security/api-tokens)).
+
     Any `SLACK_ACME_*` key reaches only that workspace's server, remapped to `SLACK_MCP_*`.
 
 3. Edit `triage.local.yaml` (scaffolded from [`triage.example.yaml`](triage.example.yaml)) to list your sources:
@@ -43,6 +46,8 @@ Each clone is configured separately:
         acme: { kind: slack }
         side: { kind: slack, channel_types: dm, mentions_only: true }
         prs: { kind: github, repos: [acme/api, acme/web] }
+        linear: { kind: linear }
+        jira: { kind: jira, url: https://acme.atlassian.net }
     ```
 
 4. Run `task setup:tell` to route this clone's notifications to Pushover in `.git/tell.yaml`.
@@ -57,6 +62,13 @@ Each source has a name (the key) and a `kind`. The name labels its signals and, 
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
 | `slack`  | `url` (workspace URL, enables message links), `channel_types` (`all`/`dm`/`group_dm`/`partner`/`internal`), `mentions_only`, `thread_mentions` (default true), `max_channels`, `max_messages_per_channel`, `exclude_channels` | unread messages, thread replies that mention you |
 | `github` | `repos: [owner/repo, …]`, `author` (default `@me`)                                                                                                                                                                            | PRs merged within `max_age`, via `gh`            |
+| `linear` | none                                                                                                                                                                                                                          | unread inbox assignments, mentions, and comments |
+| `jira`   | `url` (Jira Cloud site)                                                                                                                                                                                                       | comments and assignments on issues you follow    |
+
+Linear and Jira keep only what a teammate asked of you, so tracker traffic that mirrors GitHub or Slack, which you watch directly, stays out:
+
+- `linear` reads your [inbox](https://linear.app/docs/inbox) and keeps unread, unsnoozed notifications in the assignments, mentions, and comments categories. It drops any caused by an integration, bot, or synced external user, so GitHub PR, review, and status events and synced GitHub or Slack comments never reach triage.
+- `jira` searches issues updated since the last run that you're assigned, reported, or watch. It keeps comments that mention you or land on an issue you're assigned or reported, plus assignments to you. App users (Automation, GitHub for Jira) and your own activity are dropped. Mentions on issues you don't watch are missed, since Jira has no public notifications API.
 
 ## Token automation
 
@@ -125,4 +137,4 @@ Message text is untrusted input. Give that agent read-only tools.
 
 ## Development
 
-`task test`, `task typecheck`, and `task triage -- --dry-run`. `task doctor` checks setup, credentials, and Noon and Tell readiness without side effects. It uses live Slack `auth.test` for `xoxp`; for `xoxc`/`xoxd` it warns that credentials were not live-tested rather than make a request without slack-mcp-server's custom TLS. To add a source kind, add its schema to `src/config.ts`, a collector in `src/sources/` returning `Signal[]`, and a case in `collect()` in `src/main.ts`.
+`task test`, `task typecheck`, and `task triage -- --dry-run`. `task doctor` checks setup, credentials, and Noon and Tell readiness without side effects. It uses live Slack `auth.test` for `xoxp`; for `xoxc`/`xoxd` it warns that credentials were not live-tested rather than make a request without slack-mcp-server's custom TLS. Linear and Jira get a live read-only identity check. To add a source kind, add its schema to `src/config.ts`, a collector in `src/sources/` returning `Signal[]`, and a case in `collect()` in `src/main.ts`.

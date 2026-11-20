@@ -15,6 +15,8 @@ import {
   writeCursors,
 } from "./signal";
 import { collectGithub } from "./sources/github";
+import { collectJira } from "./sources/jira";
+import { collectLinear } from "./sources/linear";
 import { collectSlack, openServer, type SlackServer, slackContext } from "./sources/slack";
 
 const NOOP = 78; // noon.yaml noop_exit_code: nothing new or nothing worth notifying
@@ -123,6 +125,8 @@ async function main(dryRun: boolean): Promise<number> {
       Object.entries(cfg.sources).map(async ([name, source]) => {
         try {
           if (source.kind === "github") return await collectGithub(name, source, ctx);
+          if (source.kind === "linear") return await collectLinear(name, ctx);
+          if (source.kind === "jira") return await collectJira(name, source, ctx);
           const server = await openServer(name, ctx);
           servers.set(name, server);
           return await collectSlack(name, source, ctx, server);

@@ -6,6 +6,8 @@ sources:
   acme: { kind: slack, url: https://acme.slack.com } # name sets the SLACK_ACME_ env prefix; task setup:slack -- acme
   # side: { kind: slack, channel_types: dm, mentions_only: true }
   # prs: { kind: github, repos: [owner/repo] }
+  # linear: { kind: linear } # LINEAR_LINEAR_API_KEY
+  # jira: { kind: jira, url: https://acme.atlassian.net } # JIRA_JIRA_EMAIL, JIRA_JIRA_API_TOKEN
 # actions:
 #   investigate:
 #     when: { categories: [incident], min_priority: high }

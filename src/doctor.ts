@@ -7,6 +7,8 @@
 import { existsSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { type Config, loadConfig } from "./config";
+import { jiraAuth, jiraGet } from "./sources/jira";
+import { linearKey, linearQuery } from "./sources/linear";
 import { serverEnv } from "./sources/slack";
 
 const root = resolve(import.meta.dir, "..");
@@ -69,6 +71,15 @@ async function slackAuth(name: string) {
   }
 }
 
+/** A read-only identity request with the source's own credentials. */
+async function whoami(label: string, check: () => Promise<string>) {
+  try {
+    report("ok", label, await check());
+  } catch (e) {
+    report("fail", label, (e as Error).message);
+  }
+}
+
 // Checkout: scheduled jobs run only from the primary checkout.
 const primary = dirname(
   run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"]).out,
@@ -116,9 +127,31 @@ if (missing.length) report("fail", "tools", `not on PATH: ${missing.join(", ")}`
 else report("ok", "tools", tools.join(", "));
 
 await Promise.all(
-  Object.entries(cfg?.sources ?? {}).flatMap(([name, s]) =>
-    s.kind === "slack" ? [slackAuth(name)] : [],
-  ),
+  Object.entries(cfg?.sources ?? {}).flatMap(([name, s]) => {
+    if (s.kind === "slack") return [slackAuth(name)];
+    if (s.kind === "linear")
+      return [
+        whoami(`linear ${name}`, async () => {
+          const { viewer } = await linearQuery<{ viewer: { name: string } }>(
+            linearKey(name, process.env),
+            "{ viewer { name } }",
+          );
+          return viewer.name;
+        }),
+      ];
+    if (s.kind === "jira")
+      return [
+        whoami(`jira ${name}`, async () => {
+          const me = await jiraGet<{ displayName: string }>(
+            s,
+            jiraAuth(name, process.env),
+            "/rest/api/2/myself",
+          );
+          return `${me.displayName} @ ${s.url}`;
+        }),
+      ];
+    return [];
+  }),
 );
 if (kinds.has("github")) {
   const gh = run(["gh", "auth", "status"]);

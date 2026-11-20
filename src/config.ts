@@ -41,7 +41,17 @@ const GithubSource = z
   .strict();
 export type GithubSource = z.infer<typeof GithubSource>;
 
-const Source = z.discriminatedUnion("kind", [SlackSource, GithubSource]);
+const LinearSource = z.object({ kind: z.literal("linear") }).strict();
+
+const JiraSource = z
+  .object({
+    kind: z.literal("jira"),
+    url: z.url(), // Jira Cloud site, e.g. https://acme.atlassian.net
+  })
+  .strict();
+export type JiraSource = z.infer<typeof JiraSource>;
+
+const Source = z.discriminatedUnion("kind", [SlackSource, GithubSource, LinearSource, JiraSource]);
 export type Source = z.infer<typeof Source>;
 
 const Action = z
@@ -94,7 +104,7 @@ export const Config = z
         args: z.partialRecord(Priority, z.array(z.string())).default({}),
       })
       .strict(),
-    // No separators: a name is also the SLACK_<NAME>_ env prefix, which must not overlap.
+    // No separators: a name is also the SLACK_<NAME>_ (or LINEAR_, JIRA_) env prefix, which must not overlap.
     sources: z
       .record(z.string().regex(/^[a-z][a-z0-9]{0,31}$/, "use lowercase letters and digits"), Source)
       .default({}),
