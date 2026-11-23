@@ -167,7 +167,9 @@ export async function triage(
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
-  if (code !== 0) throw new Error(`${cmd[0]} exited ${code}: ${stderr.trim().slice(-500)}`);
+  // claude -p --output-format json reports errors on stdout, not stderr
+  if (code !== 0)
+    throw new Error(`${cmd[0]} exited ${code}: ${(stderr.trim() || stdout.trim()).slice(-500)}`);
   return parseOutput(cfg.llm.agent, stdout, schema);
 }
 
