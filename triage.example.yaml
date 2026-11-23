@@ -14,6 +14,16 @@ sources:
   #   acme: {} # LINEAR_ACME_API_KEY
   # jira:
   #   acme: { url: https://acme.atlassian.net } # JIRA_ACME_EMAIL, JIRA_ACME_API_TOKEN
+  hackernews:
+    top: { min_points: 1000 }
+  # feed:
+  #   world: { url: https://example.com/rss.xml }
+  # weather:
+  #   home: { lat: 0.0, lon: 0.0 }
+  # traffic:
+  #   home: # TRAFFIC_HOME_API_KEY
+  #     url: https://511.example.gov
+  #     areas: [{ lat: 0.0, lon: 0.0, km: 10 }]
 # Always include messages from these people, at no less than this priority (empty means normal).
 # vips:
 #   sam@acme.com: high

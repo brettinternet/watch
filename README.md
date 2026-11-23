@@ -1,6 +1,6 @@
 # watch
 
-A [Noon](https://github.com/brettinternet/noon) job collects signals from each configured source — unread Slack messages through [slack-mcp-server](https://github.com/korotovsky/slack-mcp-server), recently merged GitHub PRs through `gh`, and Linear and Jira asks from teammates — then Claude or Pi groups and prioritizes them, [Tell](https://github.com/brettinternet/tell) sends one Pushover notification at the matching priority, and optional actions run for matching items, such as starting an agent to investigate an incident.
+A [Noon](https://github.com/brettinternet/noon) job collects signals from each configured source — unread Slack messages through [slack-mcp-server](https://github.com/korotovsky/slack-mcp-server), recently merged GitHub PRs through `gh`, Linear and Jira asks from teammates, severe weather and traffic near you, and top news — then Claude or Pi groups and prioritizes them, [Tell](https://github.com/brettinternet/tell) sends one Pushover notification at the matching priority, and optional actions run for matching items, such as starting an agent to investigate an incident.
 
 ```mermaid
 flowchart TD
@@ -9,7 +9,8 @@ flowchart TD
   main --> s2["slack: side"]
   main --> g1["github: prs<br/>gh, watched repos"]
   main --> t1["linear / jira<br/>API key, own LINEAR_/JIRA_* only"]
-  s1 & s2 & g1 & t1 --> dedupe["drop handled (cursors)<br/>+ older than max_age"]
+  main --> w1["weather · traffic · hackernews · feed<br/>prefiltered to severe, nearby, or top"]
+  s1 & s2 & g1 & t1 & w1 --> dedupe["drop handled (cursors)<br/>+ older than max_age"]
   dedupe --> llm["one LLM call, no tools<br/>group → priority + category<br/>(text is untrusted)"]
   llm --> prio{"≥ notify.min_priority?"}
   prio -- yes --> tell["tell notify<br/>--pushover-priority P"] --> push["Pushover"]
@@ -62,12 +63,18 @@ Each clone is configured separately:
 
 Sources are grouped by kind, then keyed by a name such as the workspace's. The name sets the source's env prefix (`SLACK_<NAME>_`, `LINEAR_<NAME>_`, `JIRA_<NAME>_`), so keep it to lowercase letters and digits. Names are unique per kind, and elsewhere a source is `kind/name`, e.g. `slack/acme` in `actions.<name>.when.sources`.
 
-| Kind     | Fields                                                                                                                                                                                                                                             | Produces                                         |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `slack`  | `url` (workspace URL, enables message links), `channel_types` (`all`/`dm`/`group_dm`/`partner`/`internal`), `mentions_only`, `thread_mentions` (default true), `max_channels`, `max_messages_per_channel`, `exclude_channels`, `priority_channels` | unread messages, thread replies that mention you |
-| `github` | `repos: [owner/repo, …]`, `author` (default `@me`)                                                                                                                                                                                                 | PRs merged within `max_age`, via `gh`            |
-| `linear` | none                                                                                                                                                                                                                                               | unread inbox assignments, mentions, and comments |
-| `jira`   | `url` (Jira Cloud site)                                                                                                                                                                                                                            | comments and assignments on issues you follow    |
+| Kind         | Fields                                                                                                                                                                                                                                             | Produces                                                                                                                |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `slack`      | `url` (workspace URL, enables message links), `channel_types` (`all`/`dm`/`group_dm`/`partner`/`internal`), `mentions_only`, `thread_mentions` (default true), `max_channels`, `max_messages_per_channel`, `exclude_channels`, `priority_channels` | unread messages, thread replies that mention you                                                                        |
+| `github`     | `repos: [owner/repo, …]`, `author` (default `@me`)                                                                                                                                                                                                 | PRs merged within `max_age`, via `gh`                                                                                   |
+| `linear`     | none                                                                                                                                                                                                                                               | unread inbox assignments, mentions, and comments                                                                        |
+| `jira`       | `url` (Jira Cloud site)                                                                                                                                                                                                                            | comments and assignments on issues you follow                                                                           |
+| `weather`    | `lat`, `lon`                                                                                                                                                                                                                                       | NWS warnings at that point that are severe or extreme, observed or likely, and happening now or expected (US only)      |
+| `traffic`    | `url` (a 511 site with the IBI developer API), `areas: [{ lat, lon, km }]` (`km` default 10)                                                                                                                                                       | crashes, incidents, and closures that have started, block every lane or are rated Major, and touch an area; no roadwork |
+| `hackernews` | `min_points` (default 1000)                                                                                                                                                                                                                        | stories posted within `max_age` with at least that many points                                                          |
+| `feed`       | `url` (RSS or Atom)                                                                                                                                                                                                                                | new items; the LLM keeps only major news                                                                                |
+
+Location sources hold coordinates, so configure them only in `triage.local.yaml`. A `traffic` source reads `TRAFFIC_<NAME>_API_KEY`, a developer key from the 511 site. Each Hacker News story and traffic event has its own cursor, so one that crosses the threshold late still arrives, once; cursors older than the collection window are pruned.
 
 Linear and Jira keep only what a teammate asked of you, so tracker traffic that mirrors GitHub or Slack, which you watch directly, stays out:
 

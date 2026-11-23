@@ -68,6 +68,19 @@ export function advance(cursors: Cursors, signals: Signal[]): Cursors {
   return next;
 }
 
+/**
+ * Drops cursors older than `minTs`: `unseen` already skips anything that old, and per-item
+ * streams (stories, traffic events) would otherwise grow the file forever.
+ */
+export function prune(cursors: Cursors, minTs: string): Cursors {
+  const next: Cursors = {};
+  for (const [source, streams] of Object.entries(cursors)) {
+    const kept = Object.entries(streams).filter(([, ts]) => compareTs(ts, minTs) >= 0);
+    if (kept.length) next[source] = Object.fromEntries(kept);
+  }
+  return next;
+}
+
 /** Per stream, the later of two cursors. */
 export function latest(a: Cursors, b: Cursors): Cursors {
   const next: Cursors = structuredClone(a);

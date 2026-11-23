@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { advance, compareTs, type Signal, unseen } from "./signal";
+import { advance, compareTs, prune, type Signal, unseen } from "./signal";
 
 const sig = (channel: string, ts: string): Signal => ({
   key: `acme:${channel}:${ts}`,
@@ -37,6 +37,14 @@ test("a thread mention found late by search is not hidden by its channel's curso
   const reply = { ...sig("#a", "1700000000.000200"), stream: "thread-mentions" };
   expect(unseen([reply], cursors, "0")).toEqual([reply]);
   expect(unseen([reply], advance(cursors, [reply]), "0")).toEqual([]);
+});
+
+test("pruning cursors older than the age limit never resurfaces a handled signal", () => {
+  const minTs = "1700000000";
+  const handled = [sig("#old", "1699999999.000000"), sig("#new", "1700000001.000000")];
+  const pruned = prune(advance({}, handled), minTs);
+  expect(pruned).toEqual({ "slack/acme": { "#new": "1700000001.000000" } });
+  expect(unseen(handled, pruned, minTs)).toEqual([]);
 });
 
 test("sources sharing a name across kinds keep separate cursors", () => {

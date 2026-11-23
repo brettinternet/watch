@@ -10,15 +10,20 @@ import {
   type CollectCtx,
   compareTs,
   latest,
+  prune,
   readCursors,
   type Signal,
   unseen,
   writeCursors,
 } from "./signal";
+import { collectFeed } from "./sources/feed";
 import { collectGithub } from "./sources/github";
+import { collectHackernews } from "./sources/hackernews";
 import { collectJira } from "./sources/jira";
 import { collectLinear } from "./sources/linear";
 import { collectSlack, openServer, type SlackServer, slackContext } from "./sources/slack";
+import { collectTraffic } from "./sources/traffic";
+import { collectWeather } from "./sources/weather";
 
 const NOOP = 78; // noon.yaml noop_exit_code: nothing new or nothing worth notifying
 const CONTEXT_ITEMS = 3; // most flagged items per run that get Slack context and a second pass
@@ -125,7 +130,7 @@ async function main(dryRun: boolean): Promise<number> {
   let result: Triage | undefined;
   let collectFailed = false;
   try {
-    const { slack, github, linear, jira } = cfg.sources;
+    const { slack, github, linear, jira, weather, traffic, hackernews, feed } = cfg.sources;
     const collectors: [string, () => Promise<Signal[]>][] = [
       ...Object.entries(slack).map(([name, source]) => [
         `slack/${name}`,
@@ -143,6 +148,22 @@ async function main(dryRun: boolean): Promise<number> {
       ...Object.entries(jira).map(([name, source]) => [
         `jira/${name}`,
         () => collectJira(name, source, ctx),
+      ]),
+      ...Object.entries(weather).map(([name, source]) => [
+        `weather/${name}`,
+        () => collectWeather(name, source),
+      ]),
+      ...Object.entries(traffic).map(([name, source]) => [
+        `traffic/${name}`,
+        () => collectTraffic(name, source, ctx),
+      ]),
+      ...Object.entries(hackernews).map(([name, source]) => [
+        `hackernews/${name}`,
+        () => collectHackernews(name, source, ctx),
+      ]),
+      ...Object.entries(feed).map(([name, source]) => [
+        `feed/${name}`,
+        () => collectFeed(name, source),
       ]),
     ] as [string, () => Promise<Signal[]>][];
     const collected = await Promise.all(
@@ -221,7 +242,7 @@ async function main(dryRun: boolean): Promise<number> {
         }
       }
     }
-    if (!dryRun) writeCursors(cursorsPath, advance(cursors, fresh));
+    if (!dryRun) writeCursors(cursorsPath, prune(advance(cursors, fresh), minTs));
   }
   if (!dryRun && !afterHours && !collectFailed)
     writeFileSync(lastWorkPath, new Date(now).toISOString(), { mode: 0o600 });

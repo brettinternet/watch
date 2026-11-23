@@ -62,12 +62,43 @@ const JiraSource = z
   .strict();
 export type JiraSource = z.infer<typeof JiraSource>;
 
+const Point = { lat: z.number().min(-90).max(90), lon: z.number().min(-180).max(180) };
+
+// National Weather Service alerts at a point (US only)
+const WeatherSource = z.object(Point).strict();
+export type WeatherSource = z.infer<typeof WeatherSource>;
+
+const HackernewsSource = z
+  .object({ min_points: z.number().int().positive().default(1000) })
+  .strict();
+export type HackernewsSource = z.infer<typeof HackernewsSource>;
+
+const FeedSource = z.object({ url: z.url() }).strict(); // RSS or Atom
+export type FeedSource = z.infer<typeof FeedSource>;
+
+const TrafficSource = z
+  .object({
+    url: z.url(), // 511 site with the IBI developer API (/api/v2/get/event)
+    areas: z.array(z.object({ ...Point, km: z.number().positive().default(10) }).strict()).min(1),
+  })
+  .strict();
+export type TrafficSource = z.infer<typeof TrafficSource>;
+
 // No separators: a name is also the SLACK_<NAME>_ (LINEAR_, JIRA_) env prefix, which must not
 // overlap. Names are unique per kind, so one workspace can share a name across kinds.
 const SourceName = z.string().regex(/^[a-z][a-z0-9]{0,31}$/, "use lowercase letters and digits");
 const byName = <T extends z.ZodType>(source: T) => z.record(SourceName, source).default({});
 
-export const KINDS = ["slack", "github", "linear", "jira"] as const;
+export const KINDS = [
+  "slack",
+  "github",
+  "linear",
+  "jira",
+  "weather",
+  "traffic",
+  "hackernews",
+  "feed",
+] as const;
 
 const Action = z
   .object({
@@ -125,6 +156,10 @@ export const Config = z
         github: byName(GithubSource),
         linear: byName(LinearSource),
         jira: byName(JiraSource),
+        weather: byName(WeatherSource),
+        traffic: byName(TrafficSource),
+        hackernews: byName(HackernewsSource),
+        feed: byName(FeedSource),
       })
       .strict()
       .prefault({}),

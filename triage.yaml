@@ -9,6 +9,8 @@ categories:
   incident: Production outage, alert, customer-facing breakage, or security issue
   request: Someone is asking me directly for an answer, decision, or action
   review: A code review, approval, or document is waiting on me
+  hazard: Severe weather or a traffic disruption near me
+  news: A major news story or highly upvoted article
   fyi: Useful context with no action needed from me
   noise: Bots, chatter, and announcements I can skip
 

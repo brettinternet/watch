@@ -10,6 +10,7 @@ import { type Config, loadConfig, sourceIds } from "./config";
 import { jiraAuth, jiraGet } from "./sources/jira";
 import { linearKey, linearQuery } from "./sources/linear";
 import { readChannels, readUsers, serverEnv } from "./sources/slack";
+import { trafficEvents } from "./sources/traffic";
 
 const root = resolve(import.meta.dir, "..");
 let failed = false;
@@ -142,6 +143,12 @@ await Promise.all([
       const auth = jiraAuth(name, process.env);
       const me = await jiraGet<{ displayName: string }>(s, auth, "/rest/api/2/myself");
       return `${me.displayName} @ ${s.url}`;
+    }),
+  ),
+  ...Object.entries(sources?.traffic ?? {}).map(([name, s]) =>
+    whoami(`traffic/${name}`, async () => {
+      const events = await trafficEvents(name, s, process.env);
+      return `${events.length} events @ ${s.url}`;
     }),
   ),
 ]);
