@@ -104,7 +104,10 @@ async function main(dryRun: boolean): Promise<number> {
   const root = resolve(import.meta.dir, "..");
   const cfg = loadConfig(root);
   const sources = Object.keys(cfg.sources.slack);
-  if (sources.length === 0) throw new Error("agenda needs a slack source");
+  if (sources.length === 0) {
+    console.log("no slack source; skipping");
+    return NOOP;
+  }
 
   let blocks: Block[] | undefined;
   for (const name of sources) if ((blocks = await todayBlocks(slackApi(name)))) break;
