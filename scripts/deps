@@ -1,0 +1,8 @@
+#!/bin/sh
+# Install dependencies when bun.lock differs from the last install, however HEAD moved
+# (update job or a manual pull). A file compare when current, so scheduled jobs can call it every run.
+set -eu
+cd "$(dirname "$0")/.."
+cmp -s bun.lock node_modules/.installed-bun.lock && exit 0
+mise exec bun -- bun install --frozen-lockfile
+cp bun.lock node_modules/.installed-bun.lock

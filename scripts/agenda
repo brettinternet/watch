@@ -3,4 +3,5 @@
 # (78 is a Noon noop).
 set -eu
 cd "$(dirname "$0")/.."
+scripts/deps
 exec mise exec -- varlock run -p "$PWD/.env.schema" -p "$PWD/.env.local" -- bun src/agenda.ts "$@"
