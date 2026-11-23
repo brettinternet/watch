@@ -9,21 +9,41 @@ type Pr = {
   author: { login?: string } | null;
 };
 
-/** Recently merged PRs matching `author` across the configured repos, via `gh`. */
+export type OpenPr = {
+  number: number;
+  title: string;
+  url: string;
+  createdAt: string;
+  author: { login?: string } | null;
+  mergeStateStatus: string;
+  latestReviews: { state: string; submittedAt: string }[];
+  statusCheckRollup: { completedAt?: string; startedAt?: string }[];
+};
+
+/** Merged and/or ready-to-merge PRs matching `author` across the configured repos, via `gh`. */
 export async function collectGithub(
   name: string,
   source: GithubSource,
   ctx: CollectCtx,
 ): Promise<Signal[]> {
   const since = ctx.since.slice(0, 10); // gh search takes a date: merged:>=YYYY-MM-DD
-  const search = `author:${source.author} merged:>=${since}`;
   const signals: Signal[] = [];
   for (const repo of source.repos) {
-    const out = await gh(
-      ["pr", "list", "--repo", repo, "--state", "merged", "--search", search, "--limit", "50", "--json", "number,title,url,mergedAt,author"],
-      ctx.env,
-    ); // prettier-ignore
-    signals.push(...prsToSignals(name, repo, JSON.parse(out) as Pr[]));
+    if (source.events.includes("merged")) {
+      const search = `author:${source.author} merged:>=${since}`;
+      const out = await gh(
+        ["pr", "list", "--repo", repo, "--state", "merged", "--search", search, "--limit", "50", "--json", "number,title,url,mergedAt,author"],
+        ctx.env,
+      ); // prettier-ignore
+      signals.push(...prsToSignals(name, repo, JSON.parse(out) as Pr[]));
+    }
+    if (source.events.includes("ready")) {
+      const out = await gh(
+        ["pr", "list", "--repo", repo, "--state", "open", "--author", source.author, "--limit", "50", "--json", "number,title,url,createdAt,author,mergeStateStatus,latestReviews,statusCheckRollup"],
+        ctx.env,
+      ); // prettier-ignore
+      signals.push(...readyPrsToSignals(name, repo, JSON.parse(out) as OpenPr[]));
+    }
   }
   return signals;
 }
@@ -51,7 +71,38 @@ export function prsToSignals(name: string, repo: string, prs: Pr[]): Signal[] {
       ts: (Date.parse(p.mergedAt) / 1000).toFixed(3),
       time: p.mergedAt,
       author: p.author?.login ?? "unknown",
-      text: `${p.title} — ${p.url}`,
+      text: `Merged: ${p.title} — ${p.url}`,
       url: p.url,
     }));
+}
+
+/**
+ * Open PRs GitHub reports mergeable with every required check and review passing. GitHub has no
+ * "became ready" time, so `ts` is the latest approval or check result, which stays put while the
+ * PR stays ready and moves when a new push or review readies it again. Each PR is its own cursor
+ * stream, since one can become ready after a newer one.
+ */
+export function readyPrsToSignals(name: string, repo: string, prs: OpenPr[]): Signal[] {
+  return prs
+    .filter((p) => p.mergeStateStatus === "CLEAN" || p.mergeStateStatus === "HAS_HOOKS")
+    .map((p) => {
+      const times = [
+        p.createdAt,
+        ...p.latestReviews.filter((r) => r.state === "APPROVED").map((r) => r.submittedAt),
+        ...p.statusCheckRollup.map((c) => c.completedAt || c.startedAt || ""),
+      ].map(Date.parse);
+      const ms = Math.max(...times.filter((t) => !Number.isNaN(t)));
+      return {
+        key: `${name}:${repo}:#${p.number}:ready:${ms}`,
+        source: name,
+        kind: "github",
+        channel: repo,
+        stream: `${repo}#${p.number}:ready`,
+        ts: (ms / 1000).toFixed(3),
+        time: new Date(ms).toISOString(),
+        author: p.author?.login ?? "unknown",
+        text: `Ready to merge: ${p.title} — ${p.url}`,
+        url: p.url,
+      };
+    });
 }

@@ -70,6 +70,10 @@ const GithubSource = z
   .object({
     repos: z.array(z.string().regex(/^[^/\s]+\/[^/\s]+$/, "use owner/repo")).min(1),
     author: z.string().min(1).default("@me"),
+    events: z
+      .array(z.enum(["merged", "ready"]))
+      .min(1)
+      .default(["merged"]),
     ...Common,
   })
   .strict();
