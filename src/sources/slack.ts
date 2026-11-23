@@ -210,7 +210,7 @@ async function threadReplies(
     });
   const mentions = await search({ search_query: `<@${id}>` });
   // with: matches threads I'm in, however long ago I joined them.
-  const mine = await search({ filter_users_with: `<@${id}>` });
+  const mine = await search({ filter_users_with: id });
   const channel = channelNamer(server.channels);
   const settled = Date.now() / 1000 - SEARCH_LAG_S;
   const replies = (rows: Row[]) =>
