@@ -16,10 +16,14 @@ import {
   unseen,
   writeCursors,
 } from "./signal";
+import { collectAirQuality } from "./sources/airquality";
+import { collectDependabot } from "./sources/dependabot";
+import { collectEarthquake } from "./sources/earthquake";
 import { collectFeed } from "./sources/feed";
 import { collectGithub } from "./sources/github";
 import { collectHackernews } from "./sources/hackernews";
 import { collectJira } from "./sources/jira";
+import { collectKev } from "./sources/kev";
 import { collectLinear } from "./sources/linear";
 import { collectSlack, openServer, type SlackServer, slackContext } from "./sources/slack";
 import { collectTraffic } from "./sources/traffic";
@@ -131,6 +135,7 @@ async function main(dryRun: boolean): Promise<number> {
   let collectFailed = false;
   try {
     const { slack, github, linear, jira, weather, traffic, hackernews, feed } = cfg.sources;
+    const { earthquake, airquality, dependabot, kev } = cfg.sources;
     const collectors: [string, () => Promise<Signal[]>][] = [
       ...Object.entries(slack).map(([name, source]) => [
         `slack/${name}`,
@@ -156,6 +161,22 @@ async function main(dryRun: boolean): Promise<number> {
       ...Object.entries(traffic).map(([name, source]) => [
         `traffic/${name}`,
         () => collectTraffic(name, source, ctx),
+      ]),
+      ...Object.entries(earthquake).map(([name, source]) => [
+        `earthquake/${name}`,
+        () => collectEarthquake(name, source, ctx),
+      ]),
+      ...Object.entries(airquality).map(([name, source]) => [
+        `airquality/${name}`,
+        () => collectAirQuality(name, source),
+      ]),
+      ...Object.entries(dependabot).map(([name, source]) => [
+        `dependabot/${name}`,
+        () => collectDependabot(name, source, ctx),
+      ]),
+      ...Object.entries(kev).map(([name, source]) => [
+        `kev/${name}`,
+        () => collectKev(name, source),
       ]),
       ...Object.entries(hackernews).map(([name, source]) => [
         `hackernews/${name}`,

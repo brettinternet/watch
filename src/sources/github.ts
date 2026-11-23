@@ -19,19 +19,25 @@ export async function collectGithub(
   const search = `author:${source.author} merged:>=${since}`;
   const signals: Signal[] = [];
   for (const repo of source.repos) {
-    const proc = Bun.spawn(
-      ["gh", "pr", "list", "--repo", repo, "--state", "merged", "--search", search, "--limit", "50", "--json", "number,title,url,mergedAt,author"],
-      { env: ctx.env, stdout: "pipe", stderr: "pipe" },
+    const out = await gh(
+      ["pr", "list", "--repo", repo, "--state", "merged", "--search", search, "--limit", "50", "--json", "number,title,url,mergedAt,author"],
+      ctx.env,
     ); // prettier-ignore
-    const [out, err, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    if (code !== 0) throw new Error(`gh pr list ${repo}: ${err.trim().slice(-300)}`);
     signals.push(...prsToSignals(name, repo, JSON.parse(out) as Pr[]));
   }
   return signals;
+}
+
+/** Runs `gh` and returns its stdout; a nonzero exit throws with the end of stderr. */
+export async function gh(args: string[], env: CollectCtx["env"]): Promise<string> {
+  const proc = Bun.spawn(["gh", ...args], { env, stdout: "pipe", stderr: "pipe" });
+  const [out, err, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (code !== 0) throw new Error(`gh ${args.slice(0, 2).join(" ")}: ${err.trim().slice(-300)}`);
+  return out;
 }
 
 export function prsToSignals(name: string, repo: string, prs: Pr[]): Signal[] {

@@ -84,6 +84,25 @@ const TrafficSource = z
   .strict();
 export type TrafficSource = z.infer<typeof TrafficSource>;
 
+const EarthquakeSource = z
+  .object({
+    ...Point,
+    km: z.number().positive().default(150),
+    min_magnitude: z.number().positive().default(4),
+  })
+  .strict();
+export type EarthquakeSource = z.infer<typeof EarthquakeSource>;
+
+const AirQualitySource = z.object(Point).strict(); // US AQI forecast from Open-Meteo
+export type AirQualitySource = z.infer<typeof AirQualitySource>;
+
+const DependabotSource = z.object({ owners: z.array(z.string().min(1)).min(1) }).strict();
+export type DependabotSource = z.infer<typeof DependabotSource>;
+
+// CISA Known Exploited Vulnerabilities whose vendor or product contains any match
+const KevSource = z.object({ match: z.array(z.string().min(1)).min(1) }).strict();
+export type KevSource = z.infer<typeof KevSource>;
+
 // No separators: a name is also the SLACK_<NAME>_ (LINEAR_, JIRA_) env prefix, which must not
 // overlap. Names are unique per kind, so one workspace can share a name across kinds.
 const SourceName = z.string().regex(/^[a-z][a-z0-9]{0,31}$/, "use lowercase letters and digits");
@@ -96,6 +115,10 @@ export const KINDS = [
   "jira",
   "weather",
   "traffic",
+  "earthquake",
+  "airquality",
+  "dependabot",
+  "kev",
   "hackernews",
   "feed",
 ] as const;
@@ -158,6 +181,10 @@ export const Config = z
         jira: byName(JiraSource),
         weather: byName(WeatherSource),
         traffic: byName(TrafficSource),
+        earthquake: byName(EarthquakeSource),
+        airquality: byName(AirQualitySource),
+        dependabot: byName(DependabotSource),
+        kev: byName(KevSource),
         hackernews: byName(HackernewsSource),
         feed: byName(FeedSource),
       })

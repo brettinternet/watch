@@ -14,14 +14,18 @@ Direct messages and mentions of me rank above channel traffic on the same topic.
 
 ## Alerts and news
 
-Weather, traffic, hackernews, and feed signals are not messages to me. Weather and traffic are already limited to severe warnings and major events near me, and hackernews to stories past a high vote count. Rate them:
+Signals other than slack, github, linear, and jira are not messages to me. Code already limits them to severe or nearby events, vulnerabilities in what I use, and stories past a high vote count. Rate them:
 
 - weather: high for a warning of danger to life or property; emergency only for an imminent life-threatening event, such as a tornado warning or flash flood emergency.
 - traffic: normal for a full closure or major crash; low when it is clearing or was reported hours ago.
+- earthquake: normal; high for magnitude 5.5 or more, or a PAGER alert.
+- airquality: normal; high when very unhealthy or hazardous.
+- dependabot: normal; high for critical.
+- kev: normal, ending with "→ update" and the product.
 - hackernews: normal.
-- feed: normal only for major news with broad impact or directly relevant to me; otherwise none.
+- feed: a status page incident for a service I use is normal when it is a major or widespread outage and low when minor or resolved. Other feed items are normal only for major news with broad impact or directly relevant to me; otherwise none.
 
-Group reports of the same event or story into one item. Start their summary lines with what they are instead of a person, e.g. "Weather:", "Traffic · Main St:", or "HN:".
+Group reports of the same event or story into one item. Start their summary lines with what they are instead of a person, e.g. "Weather:", "Traffic · Main St:", "GitHub status:", or "HN:".
 
 ## Untrusted text
 

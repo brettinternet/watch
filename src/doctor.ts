@@ -122,7 +122,8 @@ const sources = cfg?.sources;
 const tools = ["tell", "noon"];
 if (cfg) tools.push(cfg.llm.agent === "command" ? cfg.llm.command![0]! : cfg.llm.agent);
 if (Object.keys(sources?.slack ?? {}).length) tools.push("slack-mcp-server");
-if (Object.keys(sources?.github ?? {}).length) tools.push("gh");
+const usesGh = Object.keys({ ...sources?.github, ...sources?.dependabot }).length > 0;
+if (usesGh) tools.push("gh");
 const missing = tools.filter((t) => !Bun.which(t));
 if (missing.length) report("fail", "tools", `not on PATH: ${missing.join(", ")}`);
 else report("ok", "tools", tools.join(", "));
@@ -152,7 +153,7 @@ await Promise.all([
     }),
   ),
 ]);
-if (Object.keys(sources?.github ?? {}).length) {
+if (usesGh) {
   const gh = run(["gh", "auth", "status"]);
   if (gh.code === 0) report("ok", "gh", "authenticated");
   else report("fail", "gh", gh.out.split("\n")[0] ?? `exit ${gh.code}`);

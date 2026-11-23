@@ -16,8 +16,18 @@ sources:
   #   acme: { url: https://acme.atlassian.net } # JIRA_ACME_EMAIL, JIRA_ACME_API_TOKEN
   hackernews:
     top: { min_points: 1000 }
-  # feed:
-  #   world: { url: https://example.com/rss.xml }
+  feed:
+    githubstatus: { url: https://www.githubstatus.com/history.atom }
+    claudestatus: { url: https://status.claude.com/history.atom }
+    cloudflarestatus: { url: https://www.cloudflarestatus.com/history.atom }
+  kev:
+    mine: { match: [Apple, Chromium] }
+  # dependabot:
+  #   mine: { owners: [your-github-login] }
+  # earthquake:
+  #   home: { lat: 0.0, lon: 0.0, km: 150 }
+  # airquality:
+  #   home: { lat: 0.0, lon: 0.0 }
   # weather:
   #   home: { lat: 0.0, lon: 0.0 }
   # traffic:
