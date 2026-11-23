@@ -183,20 +183,3 @@ export async function triage(
     throw new Error(`${cmd[0]} exited ${code}: ${(stderr.trim() || stdout.trim()).slice(-500)}`);
   return parseOutput(cfg.llm.agent, stdout, schema);
 }
-
-/** Used when the LLM fails: messages meant for me notify at normal priority, the rest stays quiet. */
-export function fallback(signals: Signal[]): Triage {
-  const counts = new Map<string, number>();
-  for (const s of signals)
-    counts.set(`${s.source} ${s.channel}`, (counts.get(`${s.source} ${s.channel}`) ?? 0) + 1);
-  return {
-    title: `${signals.length} new messages (summary unavailable)`,
-    summary: [...counts].map(([k, n]) => `${k}: ${n}`).join("\n"),
-    items: signals.map((s, i) => ({
-      ids: [`m${i + 1}`],
-      priority: s.to && s.to !== "everyone" && s.to !== "others" ? "normal" : "low",
-      category: "",
-      reason: "LLM unavailable",
-    })),
-  };
-}

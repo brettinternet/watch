@@ -152,7 +152,7 @@ All of these are gitignored or live in `.git`.
 
 Outside `work_hours` (weekdays 8–18 local time by default), only items at `notify.after_hours_min_priority` (default `high`) notify or run actions, and the summary covers only them. Those runs advance separate cursors in `.state/after-hours-cursors.json`, so the first work-hours run summarizes everything held overnight or over the weekend, reaching back past `max_age` to the previous work-hours run. Urgent items alerted after hours appear again in that summary, and their actions can run again.
 
-A run exits 0 after notifying, 78 (a Noon noop) when nothing reached the threshold, and 1 on any failure. A failed notification leaves its messages for the next run. If the LLM fails, a fallback lists counts per channel, with messages meant for you at normal priority. A failed context fetch keeps the first pass. Either way the run still exits 1, and Noon's `on_failure` hook notifies once when a streak of failures starts.
+A run exits 0 after notifying, 78 (a Noon noop) when nothing reached the threshold, and 1 on any failure. A failed notification or LLM call leaves its messages for the next run, which reaches back to the last successful work-hours run once the failure clears. A failed context fetch keeps the first pass. Either way the run still exits 1, and Noon's `on_failure` hook notifies once when a streak of failures starts.
 
 ## Actions
 

@@ -12,7 +12,7 @@ import {
   sourceIds,
 } from "./config";
 import { floorOf, raised, toItems } from "./items";
-import { type Context, fallback, triage, type Triage } from "./llm";
+import { type Context, triage, type Triage } from "./llm";
 import { notify, tellArgv } from "./notify";
 import {
   advance,
@@ -276,12 +276,16 @@ async function main(dryRun: boolean): Promise<number> {
         }
       } catch (e) {
         failures.push(`llm: ${message(e)}`);
-        result = fallback(fresh);
       }
     }
   } finally {
     // Close Slack sessions before actions, which may run long-lived agents.
     await Promise.all([...servers.values()].map((s) => s.close().catch(() => {})));
+  }
+  if (fresh.length > 0 && !result) {
+    for (const f of failures) console.error(f);
+    console.error("triage failed; signals stay unhandled for the next run");
+    return 1;
   }
 
   let notified = false;
