@@ -20,6 +20,11 @@ sources:
     githubstatus: { url: https://www.githubstatus.com/history.atom }
     claudestatus: { url: https://status.claude.com/history.atom }
     cloudflarestatus: { url: https://www.cloudflarestatus.com/history.atom }
+    # Any source takes instructions for the LLM and a cron schedule (default: every triage run).
+    # rust:
+    #   url: https://blog.rust-lang.org/feed.xml
+    #   instructions: Releases and security advisories are normal; skip everything else.
+    #   schedule: "0 9 * * 1-5"
   kev:
     mine: { match: [Apple, Chromium] }
   # dependabot:

@@ -51,11 +51,20 @@ export function compareTs(a: string, b: string): number {
   return x === y ? 0 : x < y ? -1 : 1;
 }
 
-/** Signals not yet handled and no older than `minTs`. */
-export function unseen(signals: Signal[], cursors: Cursors, minTs: string): Signal[] {
+/** kind/name source → its own lower bound, when it reaches back further than the run's. */
+export type Windows = Record<string, string>;
+
+/** Signals not yet handled and no older than `minTs`, or their source's window. */
+export function unseen(
+  signals: Signal[],
+  cursors: Cursors,
+  minTs: string,
+  windows: Windows = {},
+): Signal[] {
   return signals.filter((s) => {
     const cursor = cursors[sourceId(s)]?.[s.stream ?? s.channel];
-    return compareTs(s.ts, minTs) >= 0 && (cursor === undefined || compareTs(s.ts, cursor) > 0);
+    const min = windows[sourceId(s)] ?? minTs;
+    return compareTs(s.ts, min) >= 0 && (cursor === undefined || compareTs(s.ts, cursor) > 0);
   });
 }
 
@@ -71,13 +80,14 @@ export function advance(cursors: Cursors, signals: Signal[]): Cursors {
 }
 
 /**
- * Drops cursors older than `minTs`: `unseen` already skips anything that old, and per-item
- * streams (stories, traffic events) would otherwise grow the file forever.
+ * Drops cursors older than `minTs` or their source's window: `unseen` already skips anything
+ * that old, and per-item streams (stories, traffic events) would otherwise grow the file forever.
  */
-export function prune(cursors: Cursors, minTs: string): Cursors {
+export function prune(cursors: Cursors, minTs: string, windows: Windows = {}): Cursors {
   const next: Cursors = {};
   for (const [source, streams] of Object.entries(cursors)) {
-    const kept = Object.entries(streams).filter(([, ts]) => compareTs(ts, minTs) >= 0);
+    const min = windows[source] ?? minTs;
+    const kept = Object.entries(streams).filter(([, ts]) => compareTs(ts, min) >= 0);
     if (kept.length) next[source] = Object.fromEntries(kept);
   }
   return next;
@@ -96,11 +106,11 @@ export function latest(a: Cursors, b: Cursors): Cursors {
   return next;
 }
 
-export function readCursors(path: string): Cursors {
-  return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
+export function readState<T extends object>(path: string): T {
+  return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : ({} as T);
 }
 
-export function writeCursors(path: string, cursors: Cursors): void {
-  writeFileSync(`${path}.tmp`, `${JSON.stringify(cursors, null, 2)}\n`, { mode: 0o600 });
+export function writeState(path: string, state: object): void {
+  writeFileSync(`${path}.tmp`, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
   renameSync(`${path}.tmp`, path);
 }

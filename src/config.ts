@@ -27,6 +27,26 @@ const floors = (keys: z.ZodString | z.ZodEmail, key: (k: string) => string) =>
     .default({})
     .transform((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [key(k), v])));
 
+/** A 5-field cron expression or nickname, in local time. */
+const Cron = z.string().refine(
+  (s) => {
+    try {
+      return Bun.cron.parse(s) !== null;
+    } catch {
+      return false;
+    }
+  },
+  { message: "use a cron expression like 0 9 * * 1-5" },
+);
+
+/** Fields every source accepts. */
+const Common = {
+  // Trusted guidance for triaging this source's signals, e.g. what to look for or skip
+  instructions: z.string().min(1).optional(),
+  // Collect at the first run after each occurrence instead of every run
+  schedule: Cron.optional(),
+};
+
 const Name = z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/, "use lowercase letters, digits, - or _");
 const Argv = z.array(z.string().min(1)).min(1);
 
@@ -41,6 +61,7 @@ const SlackSource = z
     exclude_channels: z.array(z.string()).default([]),
     // Channel name (with or without #) → minimum priority for its messages
     priority_channels: floors(z.string().min(1), (k) => k.replace(/^#/, "")),
+    ...Common,
   })
   .strict();
 export type SlackSource = z.infer<typeof SlackSource>;
@@ -49,15 +70,17 @@ const GithubSource = z
   .object({
     repos: z.array(z.string().regex(/^[^/\s]+\/[^/\s]+$/, "use owner/repo")).min(1),
     author: z.string().min(1).default("@me"),
+    ...Common,
   })
   .strict();
 export type GithubSource = z.infer<typeof GithubSource>;
 
-const LinearSource = z.object({}).strict();
+const LinearSource = z.object(Common).strict();
 
 const JiraSource = z
   .object({
     url: z.url(), // Jira Cloud site, e.g. https://acme.atlassian.net
+    ...Common,
   })
   .strict();
 export type JiraSource = z.infer<typeof JiraSource>;
@@ -65,21 +88,22 @@ export type JiraSource = z.infer<typeof JiraSource>;
 const Point = { lat: z.number().min(-90).max(90), lon: z.number().min(-180).max(180) };
 
 // National Weather Service alerts at a point (US only)
-const WeatherSource = z.object(Point).strict();
+const WeatherSource = z.object({ ...Point, ...Common }).strict();
 export type WeatherSource = z.infer<typeof WeatherSource>;
 
 const HackernewsSource = z
-  .object({ min_points: z.number().int().positive().default(1000) })
+  .object({ min_points: z.number().int().positive().default(1000), ...Common })
   .strict();
 export type HackernewsSource = z.infer<typeof HackernewsSource>;
 
-const FeedSource = z.object({ url: z.url() }).strict(); // RSS or Atom
+const FeedSource = z.object({ url: z.url(), ...Common }).strict(); // RSS or Atom
 export type FeedSource = z.infer<typeof FeedSource>;
 
 const TrafficSource = z
   .object({
     url: z.url(), // 511 site with the IBI developer API (/api/v2/get/event)
     areas: z.array(z.object({ ...Point, km: z.number().positive().default(10) }).strict()).min(1),
+    ...Common,
   })
   .strict();
 export type TrafficSource = z.infer<typeof TrafficSource>;
@@ -89,18 +113,21 @@ const EarthquakeSource = z
     ...Point,
     km: z.number().positive().default(150),
     min_magnitude: z.number().positive().default(4),
+    ...Common,
   })
   .strict();
 export type EarthquakeSource = z.infer<typeof EarthquakeSource>;
 
-const AirQualitySource = z.object(Point).strict(); // US AQI forecast from Open-Meteo
+const AirQualitySource = z.object({ ...Point, ...Common }).strict(); // US AQI forecast from Open-Meteo
 export type AirQualitySource = z.infer<typeof AirQualitySource>;
 
-const DependabotSource = z.object({ owners: z.array(z.string().min(1)).min(1) }).strict();
+const DependabotSource = z
+  .object({ owners: z.array(z.string().min(1)).min(1), ...Common })
+  .strict();
 export type DependabotSource = z.infer<typeof DependabotSource>;
 
 // CISA Known Exploited Vulnerabilities whose vendor or product contains any match
-const KevSource = z.object({ match: z.array(z.string().min(1)).min(1) }).strict();
+const KevSource = z.object({ match: z.array(z.string().min(1)).min(1), ...Common }).strict();
 export type KevSource = z.infer<typeof KevSource>;
 
 // No separators: a name is also the SLACK_<NAME>_ (LINEAR_, JIRA_) env prefix, which must not
@@ -197,9 +224,20 @@ export const Config = z
   .strict();
 export type Config = z.infer<typeof Config>;
 
-/** Every configured source as kind/name, e.g. slack/acme. */
-export const sourceIds = (cfg: Config) =>
-  KINDS.flatMap((kind) => Object.keys(cfg.sources[kind]).map((name) => `${kind}/${name}`));
+/** Every configured source keyed as kind/name, e.g. slack/acme. */
+export const sourceEntries = (cfg: Config) =>
+  KINDS.flatMap((kind) =>
+    Object.entries(cfg.sources[kind]).map(([name, source]) => [`${kind}/${name}`, source] as const),
+  );
+
+export const sourceIds = (cfg: Config): string[] => sourceEntries(cfg).map(([id]) => id);
+
+/** Whether a source runs now: unscheduled, never collected, or its schedule fired since `last`. */
+export function due(schedule: string | undefined, last: number | undefined, now: number): boolean {
+  if (!schedule || last === undefined) return true;
+  const next = Bun.cron.parse(schedule, last);
+  return next !== null && next.getTime() <= now;
+}
 
 export function inWorkHours(work: Config["work_hours"], at: Date): boolean {
   if (!work) return true;

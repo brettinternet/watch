@@ -85,6 +85,24 @@ Linear and Jira keep only what a teammate asked of you, so tracker traffic that 
 - `linear` reads your [inbox](https://linear.app/docs/inbox) and keeps unread, unsnoozed notifications in the assignments, mentions, and comments categories. It drops any caused by an integration, bot, or synced external user, so GitHub PR, review, and status events and synced GitHub or Slack comments never reach triage.
 - `jira` searches issues updated since the last run that you're assigned, reported, or watch. It keeps comments that mention you or land on an issue you're assigned or reported, plus assignments to you. App users (Automation, GitHub for Jira) and your own activity are dropped. Mentions on issues you don't watch are missed, since Jira has no public notifications API.
 
+### Instructions and schedules
+
+Every source also accepts `instructions` and `schedule`:
+
+```yaml
+# triage.local.yaml
+sources:
+    feed:
+        rust:
+            url: https://blog.rust-lang.org/feed.xml
+            instructions: Releases and security advisories are normal; skip everything else.
+            schedule: "0 9 * * 1-5"
+```
+
+`instructions` tells the LLM what to look for in that source's signals and overrides the prompt's defaults for them. They come from your config, so they are trusted, unlike message text.
+
+`schedule` is a cron expression in local time. Without one, a source is collected every triage run. With one, it is collected at the first triage run after each occurrence, so precision is limited by `TRIAGE_SCHEDULE`, and a missed occurrence catches up on wake. A scheduled source reaches back to its last collection even past `max_age`, so a daily or weekly digest misses nothing. Collection times live in `.state/collected.json`; after-hours runs track theirs separately in `.state/after-hours-collected.json`, so the next work-hours run still collects anything held overnight.
+
 ## VIPs and priority channels
 
 ```yaml
@@ -126,7 +144,7 @@ All of these are gitignored or live in `.git`.
 
 ## How a run works
 
-1. Collect unread messages from every source, plus Slack thread replies that mention you or land in threads you are in, which the unread scan misses. Messages stay unread in Slack.
+1. Collect unread messages from every source that is due (see [schedules](#instructions-and-schedules)), plus Slack thread replies that mention you or land in threads you are in, which the unread scan misses. Messages stay unread in Slack.
 2. Drop messages already handled, using per-channel cursors in `.state/cursors.json`, and messages older than `max_age`.
 3. Tag each Slack message with who it is for, from mention markup and your recent messages and user groups: a DM, a mention of you, a reply in your thread, your team, everyone, someone else, a likely answer to you, or a group DM. Tag messages from `vips` and `priority_channels` with their minimum priority. One LLM call with no tools groups messages into items with a priority and category. If it flags up to three items at or above `notify.min_priority` as needing context, the collector fetches their Slack threads and recent channel messages read-only, and a second call triages again with them. Items are raised to their messages' minimum priorities. The overall priority is the highest item's priority.
 4. If it reaches `notify.min_priority`, run `tell notify` with `notify.args[priority]`. Emergency priority repeats every `retry` until acknowledged or `expire`.

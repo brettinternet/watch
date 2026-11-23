@@ -1,7 +1,16 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { matches, runAction } from "./actions";
-import { type Config, inWorkHours, loadConfig, type Priority, rank, sourceIds } from "./config";
+import {
+  type Config,
+  due,
+  inWorkHours,
+  loadConfig,
+  type Priority,
+  rank,
+  sourceEntries,
+  sourceIds,
+} from "./config";
 import { floorOf, raised, toItems } from "./items";
 import { type Context, fallback, triage, type Triage } from "./llm";
 import { notify, tellArgv } from "./notify";
@@ -9,13 +18,15 @@ import {
   advance,
   type CollectCtx,
   compareTs,
+  type Cursors,
   latest,
   prune,
-  readCursors,
+  readState,
   type Signal,
   sourceId,
   unseen,
-  writeCursors,
+  type Windows,
+  writeState,
 } from "./signal";
 import { collectAirQuality } from "./sources/airquality";
 import { collectDependabot } from "./sources/dependabot";
@@ -32,6 +43,15 @@ import { collectWeather } from "./sources/weather";
 
 const NOOP = 78; // noon.yaml noop_exit_code: nothing new or nothing worth notifying
 const CONTEXT_ITEMS = 3; // most flagged items per run that get Slack context and a second pass
+
+/** kind/name source → ISO time of its last handled collection. */
+type Collected = Record<string, string>;
+/** Per source, the later of two collection times. */
+const later = (a: Collected, b: Collected): Collected => {
+  const next = { ...a };
+  for (const [id, at] of Object.entries(b)) if (!next[id] || at > next[id]) next[id] = at;
+  return next;
+};
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -107,8 +127,8 @@ async function main(dryRun: boolean): Promise<number> {
   // next work-hours run summarizes them.
   const handledPath = join(stateDir, "cursors.json");
   const heldPath = join(stateDir, "after-hours-cursors.json");
-  const handled = readCursors(handledPath);
-  const cursors = afterHours ? latest(handled, readCursors(heldPath)) : handled;
+  const handled = readState<Cursors>(handledPath);
+  const cursors = afterHours ? latest(handled, readState<Cursors>(heldPath)) : handled;
   const cursorsPath = afterHours ? heldPath : handledPath;
   const failures: string[] = [];
 
@@ -128,6 +148,30 @@ async function main(dryRun: boolean): Promise<number> {
     vips: new Set(Object.keys(cfg.vips)),
   };
 
+  // A scheduled source runs at the first run after each occurrence and reaches back to its last
+  // collection. Like cursors, after-hours collections are tracked separately, so the next
+  // work-hours run still collects what they held.
+  const collectedPath = join(
+    stateDir,
+    afterHours ? "after-hours-collected.json" : "collected.json",
+  );
+  const ownCollected = readState<Collected>(collectedPath);
+  const lastCollected = afterHours
+    ? later(readState<Collected>(join(stateDir, "collected.json")), ownCollected)
+    : ownCollected;
+  const scheduled = sourceEntries(cfg).flatMap(([id, s]) =>
+    s.schedule ? [[id, s.schedule] as const] : [],
+  );
+  const windows: Windows = {};
+  const skipped = new Set<string>();
+  for (const [id, schedule] of scheduled) {
+    const last = lastCollected[id] ? Date.parse(lastCollected[id]) : undefined;
+    if (last !== undefined && last < from) windows[id] = String(Math.floor(last / 1000));
+    if (!due(schedule, last, now)) skipped.add(id);
+  }
+  if (skipped.size) console.log(`not due: ${[...skipped].join(", ")}`);
+  const ran = new Set<string>();
+
   // One slack-mcp-server per source for the whole run: a single Slack session covers both
   // collection and the context pass, instead of re-authenticating between them.
   const servers = new Map<string, SlackServer>();
@@ -137,10 +181,10 @@ async function main(dryRun: boolean): Promise<number> {
   try {
     const { slack, github, linear, jira, weather, traffic, hackernews, feed } = cfg.sources;
     const { earthquake, airquality, dependabot, kev } = cfg.sources;
-    const collectors: [string, () => Promise<Signal[]>][] = [
+    const collectors: [string, (ctx: CollectCtx) => Promise<Signal[]>][] = [
       ...Object.entries(slack).map(([name, source]) => [
         `slack/${name}`,
-        async () => {
+        async (ctx: CollectCtx) => {
           const server = await openServer(name, ctx);
           servers.set(name, server);
           return collectSlack(name, source, ctx, server);
@@ -148,12 +192,15 @@ async function main(dryRun: boolean): Promise<number> {
       ]),
       ...Object.entries(github).map(([name, source]) => [
         `github/${name}`,
-        () => collectGithub(name, source, ctx),
+        (ctx: CollectCtx) => collectGithub(name, source, ctx),
       ]),
-      ...Object.keys(linear).map((name) => [`linear/${name}`, () => collectLinear(name, ctx)]),
+      ...Object.keys(linear).map((name) => [
+        `linear/${name}`,
+        (ctx: CollectCtx) => collectLinear(name, ctx),
+      ]),
       ...Object.entries(jira).map(([name, source]) => [
         `jira/${name}`,
-        () => collectJira(name, source, ctx),
+        (ctx: CollectCtx) => collectJira(name, source, ctx),
       ]),
       ...Object.entries(weather).map(([name, source]) => [
         `weather/${name}`,
@@ -161,11 +208,11 @@ async function main(dryRun: boolean): Promise<number> {
       ]),
       ...Object.entries(traffic).map(([name, source]) => [
         `traffic/${name}`,
-        () => collectTraffic(name, source, ctx),
+        (ctx: CollectCtx) => collectTraffic(name, source, ctx),
       ]),
       ...Object.entries(earthquake).map(([name, source]) => [
         `earthquake/${name}`,
-        () => collectEarthquake(name, source, ctx),
+        (ctx: CollectCtx) => collectEarthquake(name, source, ctx),
       ]),
       ...Object.entries(airquality).map(([name, source]) => [
         `airquality/${name}`,
@@ -173,7 +220,7 @@ async function main(dryRun: boolean): Promise<number> {
       ]),
       ...Object.entries(dependabot).map(([name, source]) => [
         `dependabot/${name}`,
-        () => collectDependabot(name, source, ctx),
+        (ctx: CollectCtx) => collectDependabot(name, source, ctx),
       ]),
       ...Object.entries(kev).map(([name, source]) => [
         `kev/${name}`,
@@ -181,17 +228,23 @@ async function main(dryRun: boolean): Promise<number> {
       ]),
       ...Object.entries(hackernews).map(([name, source]) => [
         `hackernews/${name}`,
-        () => collectHackernews(name, source, ctx),
+        (ctx: CollectCtx) => collectHackernews(name, source, ctx),
       ]),
       ...Object.entries(feed).map(([name, source]) => [
         `feed/${name}`,
         () => collectFeed(name, source),
       ]),
-    ] as [string, () => Promise<Signal[]>][];
+    ] as [string, (ctx: CollectCtx) => Promise<Signal[]>][];
     const collected = await Promise.all(
       collectors.map(async ([id, collect]) => {
+        if (skipped.has(id)) return [];
+        const window = windows[id];
         try {
-          return await collect();
+          const signals = await collect(
+            window ? { ...ctx, since: new Date(Number(window) * 1000).toISOString() } : ctx,
+          );
+          ran.add(id);
+          return signals;
         } catch (e) {
           failures.push(`source ${id}: ${message(e)}`);
           return [];
@@ -200,7 +253,7 @@ async function main(dryRun: boolean): Promise<number> {
     );
     collectFailed = failures.length > 0;
     // Each channel's messages stay together in time order, so triage reads them as conversations.
-    fresh = unseen(collected.flat(), cursors, minTs)
+    fresh = unseen(collected.flat(), cursors, minTs, windows)
       .sort(
         (a, b) =>
           sourceId(a).localeCompare(sourceId(b)) ||
@@ -270,7 +323,15 @@ async function main(dryRun: boolean): Promise<number> {
         }
       }
     }
-    if (!dryRun) writeCursors(cursorsPath, prune(advance(cursors, fresh), minTs));
+    if (!dryRun) writeState(cursorsPath, prune(advance(cursors, fresh), minTs, windows));
+  }
+  if (!dryRun && scheduled.length) {
+    const next: Collected = {};
+    for (const [id] of scheduled) {
+      const at = ran.has(id) ? new Date(now).toISOString() : ownCollected[id];
+      if (at) next[id] = at;
+    }
+    writeState(collectedPath, next);
   }
   if (!dryRun && !afterHours && !collectFailed)
     writeFileSync(lastWorkPath, new Date(now).toISOString(), { mode: 0o600 });

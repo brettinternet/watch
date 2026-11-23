@@ -47,6 +47,16 @@ test("pruning cursors older than the age limit never resurfaces a handled signal
   expect(unseen(handled, pruned, minTs)).toEqual([]);
 });
 
+test("a scheduled source's window keeps its backlog and cursors past the age limit", () => {
+  const minTs = "1700000000";
+  const windows = { "slack/acme": "1690000000" }; // last collected a week earlier
+  const handled = sig("#a", "1695000000.000000");
+  const backlog = sig("#a", "1696000000.000000");
+  const cursors = prune(advance({}, [handled]), minTs, windows);
+  expect(cursors).toEqual({ "slack/acme": { "#a": "1695000000.000000" } });
+  expect(unseen([handled, backlog], cursors, minTs, windows)).toEqual([backlog]);
+});
+
 test("sources sharing a name across kinds keep separate cursors", () => {
   const linear = { ...sig("ENG-7", "1700000000.000200"), kind: "linear" };
   const jira = { ...sig("ENG-7", "1700000000.000100"), kind: "jira" };
