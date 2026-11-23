@@ -15,6 +15,17 @@ jobs:
     run: [./scripts/triage]
     on_failure: [./scripts/on-failure]
 
+  agenda:
+    description: >
+      Notify today's meetings from the Outlook Calendar app's Home tab in Slack.
+      Noop (78) means no meetings today. A missed run catches up once on wake.
+    schedule: "${AGENDA_SCHEDULE:-30 7 * * 1-5}"
+    timeout: 5m
+    overlap: skip
+    noop_exit_code: 78
+    run: [./scripts/agenda]
+    on_failure: [./scripts/on-failure]
+
   update:
     description: >
       Fast-forward this checkout to its upstream and install dependencies.

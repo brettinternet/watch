@@ -24,6 +24,10 @@ tasks:
     desc: Collect, summarize, and notify once; `task triage -- --dry-run` previews without side effects
     cmd: ./scripts/triage {{.CLI_ARGS}}
 
+  agenda:
+    desc: Notify today's meetings once; `task agenda -- --dry-run` previews without notifying
+    cmd: ./scripts/agenda {{.CLI_ARGS}}
+
   doctor:
     desc: Check setup, credentials, and scheduler state without side effects
     cmd: "{{.ENV_RUN}} -- bun src/doctor.ts"

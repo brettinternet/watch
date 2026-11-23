@@ -57,7 +57,7 @@ Each clone is configured separately:
 
 4. Run `task setup:tell` to route this clone's notifications to Pushover in `.git/tell.yaml`.
 5. Run `task triage -- --dry-run` to preview a run without notifying, running actions, or recording anything. The first run against a large workspace is slow while the user and channel caches sync.
-6. Run `noon enable` to schedule triage and the hourly `update` job, which fast-forwards this checkout, installs dependencies, and notifies when `noon.yaml` changed and needs `noon enable` again. Both jobs notify once when they start failing. The Noon service's `PATH` must include `mise`, the agent CLI, and `gh`.
+6. Run `noon enable` to schedule triage, the weekday [`agenda`](#daily-agenda), and the hourly `update` job, which fast-forwards this checkout, installs dependencies, and notifies when `noon.yaml` changed and needs `noon enable` again. Both jobs notify once when they start failing. The Noon service's `PATH` must include `mise`, the agent CLI, and `gh`.
 
 ## Sources
 
@@ -115,14 +115,14 @@ It is a best-effort devtool for macOS and may need updating when Slack changes i
 
 All of these are gitignored or live in `.git`.
 
-| File                | Purpose                                                                                                                                                |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `.env.local`        | Secrets                                                                                                                                                |
-| `triage.local.yaml` | Sources, LLM, and actions. Scaffolded from [`triage.example.yaml`](triage.example.yaml); deep-merges over [`triage.yaml`](triage.yaml), lists replace. |
-| `triage.local.md`   | Extra instructions appended to [`prompts/triage.md`](prompts/triage.md), e.g. who you are and what you own                                             |
-| `.noon.vars`        | `TRIAGE_SCHEDULE` (default `*/15 * * * *`), `TRIAGE_TIMEOUT` (default `10m`), and `UPDATE_SCHEDULE` (default `0 * * * *`)                              |
-| `.git/tell.yaml`    | Notification routing                                                                                                                                   |
-| `.git/noon.yaml`    | Private Noon jobs                                                                                                                                      |
+| File                | Purpose                                                                                                                                                               |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.env.local`        | Secrets                                                                                                                                                               |
+| `triage.local.yaml` | Sources, LLM, and actions. Scaffolded from [`triage.example.yaml`](triage.example.yaml); deep-merges over [`triage.yaml`](triage.yaml), lists replace.                |
+| `triage.local.md`   | Extra instructions appended to [`prompts/triage.md`](prompts/triage.md), e.g. who you are and what you own                                                            |
+| `.noon.vars`        | `TRIAGE_SCHEDULE` (default `*/15 * * * *`), `TRIAGE_TIMEOUT` (default `10m`), `AGENDA_SCHEDULE` (default `30 7 * * 1-5`), and `UPDATE_SCHEDULE` (default `0 * * * *`) |
+| `.git/tell.yaml`    | Notification routing                                                                                                                                                  |
+| `.git/noon.yaml`    | Private Noon jobs                                                                                                                                                     |
 
 ## How a run works
 
@@ -161,6 +161,10 @@ jobs:
 ```
 
 Message text is untrusted input. Give that agent read-only tools.
+
+## Daily agenda
+
+The `agenda` job sends one quiet notification listing today's meetings from the [Outlook Calendar](https://slack.com/apps/AFV5ECLBZ) app's Home tab, in the first Slack source where the app is installed. It opens the tab through Slack's web API with that source's desktop `xoxc`/`xoxd` session, as the client does, waits for the app to publish today's view, and reads the events from its blocks; no LLM is involved. It exits 78 when there are no meetings. Open the app's Home tab once in Slack before the first run. Preview with `task agenda -- --dry-run`.
 
 ## Agent sessions
 
