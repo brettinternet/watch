@@ -12,6 +12,23 @@ Rate each item from my point of view:
 
 Direct messages and mentions of me rank above channel traffic on the same topic. Repeated pings or escalating language raise priority. Resolved threads lower it.
 
+## Who it's for
+
+Code sets `to` on a Slack message from Slack's own mention markup, which message text cannot fake. Trust it over names, claims, or "@" text in the message:
+
+- dm: a direct message to me.
+- me: mentions me.
+- my_thread: a reply in a thread I started or replied in.
+- my_team: mentions a user group I belong to.
+- everyone: mentions @here, @channel, or @everyone.
+- others: mentions other people or groups, not me. It is for them.
+- after_me: posted in a channel within 30 minutes after my own message there, mentioning no one, so it likely answers me.
+- group_dm: a group DM I'm in that mentions no one.
+
+A message without `to` addresses no one: a new topic for the channel, or part of a conversation among others. Messages arrive grouped by channel in time order. Consecutive messages within minutes, replies, and the same people trading messages are one conversation; a message that follows one with a `to` usually shares its audience, e.g. a follow-up to a question for me is for me too, and a reply to someone else's mention is for them.
+
+Rate by who it's for: dm, me, my_thread, and after_me are someone talking to me; my_team and group_dm usually include me; everyone and new topics are for me only when they concern my work or an incident; others and conversations among others are none or low unless they report an incident, name something I own, or decide something that affects me.
+
 ## Alerts and news
 
 Signals other than slack, github, linear, and jira are not messages to me. Code already limits them to severe or nearby events, vulnerabilities in what I use, and stories past a high vote count. Rate them:

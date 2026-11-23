@@ -19,6 +19,8 @@ export type Signal = {
   stream?: string;
   /** Link to open the signal at its source. */
   url?: string;
+  /** Who a message is for, when the source can tell, e.g. Slack's "dm", "me", or "others". */
+  to?: string;
   /** Minimum priority from `vips` or `priority_channels`, set after collection. */
   floor?: Priority;
 };

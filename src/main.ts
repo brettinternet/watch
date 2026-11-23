@@ -13,6 +13,7 @@ import {
   prune,
   readCursors,
   type Signal,
+  sourceId,
   unseen,
   writeCursors,
 } from "./signal";
@@ -198,8 +199,14 @@ async function main(dryRun: boolean): Promise<number> {
       }),
     );
     collectFailed = failures.length > 0;
+    // Each channel's messages stay together in time order, so triage reads them as conversations.
     fresh = unseen(collected.flat(), cursors, minTs)
-      .sort((a, b) => a.time.localeCompare(b.time))
+      .sort(
+        (a, b) =>
+          sourceId(a).localeCompare(sourceId(b)) ||
+          a.channel.localeCompare(b.channel) ||
+          a.time.localeCompare(b.time),
+      )
       .map((s) => {
         const floor = floorOf(cfg, s);
         return floor ? { ...s, floor } : s;

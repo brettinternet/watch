@@ -69,6 +69,7 @@ const line = (cfg: Config, s: Signal, extra: Record<string, string>) =>
     author: s.author,
     time: s.time,
     ...(s.thread ? { in_thread: true } : {}),
+    ...(s.to ? { to: s.to } : {}),
     ...(s.floor ? { min_priority: s.floor } : {}),
     text: s.text.length > cfg.max_text ? `${s.text.slice(0, cfg.max_text)}…` : s.text,
   }).replace(/[<>]/g, (c) => (c === "<" ? "\\u003c" : "\\u003e"));
@@ -170,7 +171,7 @@ export async function triage(
   return parseOutput(cfg.llm.agent, stdout, schema);
 }
 
-/** Used when the LLM fails: DMs notify at normal priority, everything else stays quiet. */
+/** Used when the LLM fails: messages meant for me notify at normal priority, the rest stays quiet. */
 export function fallback(signals: Signal[]): Triage {
   const counts = new Map<string, number>();
   for (const s of signals)
@@ -180,7 +181,7 @@ export function fallback(signals: Signal[]): Triage {
     summary: [...counts].map(([k, n]) => `${k}: ${n}`).join("\n"),
     items: signals.map((s, i) => ({
       ids: [`m${i + 1}`],
-      priority: s.channel.startsWith("@") ? "normal" : "low",
+      priority: s.to && s.to !== "everyone" && s.to !== "others" ? "normal" : "low",
       category: "",
       reason: "LLM unavailable",
     })),
