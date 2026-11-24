@@ -395,6 +395,7 @@ async function main(dryRun: boolean): Promise<number> {
         minPriority,
         now,
         work: cfg.work_hours,
+        signals: all,
       });
   }
   for (const c of changes(ledgerBefore, ledger)) console.log(`follow-up ${c}`);

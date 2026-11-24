@@ -50,8 +50,8 @@ const item = (signals: Signal[], priority: Item["priority"], category: string): 
   reason: signals.at(-1)!.text,
   signals,
 });
-const opts = (now: number, notified = true) =>
-  ({ notified, minPriority: "normal", now, work }) as const;
+const opts = (now: number, notified = true, signals: Signal[] = []) =>
+  ({ notified, minPriority: "normal", now, work, signals }) as const;
 const open = (l: Followups) => Object.values(l).filter((x) => !x.closed);
 const reason = (l: Followups) => Object.values(l)[0]!.closed?.reason;
 
@@ -161,6 +161,29 @@ test("a later top-level message answers a DM but not a channel ask", () => {
   expect(
     open(update(loop(post), evidence(at(23, 10), [], [{ channel: "#ops", ...top }]))),
   ).toHaveLength(1);
+});
+
+test("a Slack ask about a requested review is one loop, closed by the review, not a reply", () => {
+  const asked = at(23, 9);
+  const pr = review(7, asked - 3_600_000);
+  const url = "<https://github.com/acme/api/pull/7|acme/api#7>";
+  const ask = slack(`can you review ${url}?`, asked);
+  const reply: Mine = { channel: "@sam", ts: ts(asked + 1000) };
+
+  // The review request opened a loop an hour ago; Sam's ask about the same PR replaces it.
+  let ledger = track({}, [item([pr], "normal", "review")], [pr], opts(asked - 3_600_000));
+  ledger = track(ledger, [item([ask], "normal", "request")], [ask], opts(asked, true, [pr]));
+  expect(open(ledger).map((l) => l.ask)).toEqual([`Sam · @sam: can you review ${url}?`]);
+
+  const ran = ["slack/acme", "github/work"];
+  expect(open(update(ledger, evidence(at(23, 15), [pr], [reply], ran)))).toHaveLength(1);
+  const reviewed = update(ledger, evidence(at(23, 15), [], [reply], ran));
+  expect(open(reviewed)).toEqual([]);
+  expect(Object.values(reviewed).at(-1)!.closed?.reason).toBe("reviewed or no longer requested");
+
+  // A PR no source reported isn't linked, so its absence can't close the ask.
+  const other = track({}, [item([ask], "normal", "request")], [ask], opts(asked));
+  expect(open(update(other, evidence(at(23, 15), [], [], ran)))).toHaveLength(1);
 });
 
 test("a new ask in the same thread replaces its loop, but a silent one never does", () => {

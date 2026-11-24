@@ -76,7 +76,47 @@ export const conv = (s: Anchor) =>
     ? `slack/${s.source}:${s.channel}:${s.thread ?? s.ts}`
     : `${s.kind}/${s.source}:${s.stream ?? s.channel}`;
 
-const anchor = ({ key, kind, source, channel, ts, thread, stream, to }: Signal): Anchor => ({
+const ISSUE = /^[A-Z][A-Z0-9]*-\d+$/;
+
+/**
+ * The PR or Linear issue an anchor stands for, when its source reports that thing's own state:
+ * a PR awaiting my review or ready to merge, or a Linear issue in my inbox.
+ */
+export const entity = (a: Anchor): string | undefined =>
+  a.kind === "github" && a.stream
+    ? `github:${a.stream.replace(/:[a-z]+$/, "").toLowerCase()}`
+    : a.kind === "linear" && ISSUE.test(a.channel)
+      ? `linear:${a.channel}`
+      : undefined;
+
+/**
+ * PRs and Linear issues a message mentions, by URL, owner/repo#N, or ABC-123. Bare `#N` is left
+ * out since it doesn't say which repo. Only entities a source reported get linked, so a pattern
+ * that merely looks like one, e.g. UTF-8, links to nothing.
+ */
+export function refs(text: string): string[] {
+  const prs = text.matchAll(
+    /github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)|(?<![\w/.-])([\w.-]+\/[\w.-]+)#(\d+)\b/g,
+  );
+  return [
+    ...[...prs].map((m) => `github:${(m[1] ?? m[3])!.toLowerCase()}#${m[2] ?? m[4]}`),
+    ...[...text.matchAll(/\b[A-Z][A-Z0-9]*-\d+\b/g)].map((m) => `linear:${m[0]}`),
+  ];
+}
+
+/** A loop's conversations and entities; loops sharing one are the same ask. */
+const ids = (a: Anchor) => [conv(a), entity(a)].filter((x) => x !== undefined);
+
+/**
+ * The anchors that decide a loop: once linked to a PR or Linear issue, its state, so replying
+ * "on it" doesn't close a review still requested.
+ */
+const deciding = (l: Loop) => {
+  const linked = l.anchors.filter((a) => entity(a));
+  return linked.length ? linked : l.anchors;
+};
+
+const anchor = ({ key, kind, source, channel, ts, thread, stream, to }: Anchor): Anchor => ({
   key,
   kind,
   source,
@@ -173,9 +213,10 @@ export function update(ledger: Followups, ev: Evidence): Followups {
       if (now - Date.parse(loop.closed.at) < TTL) next[id] = loop;
       continue;
     }
-    const checked = loop.anchors.map((a) => status(a, ev));
+    const checked = deciding(loop).map((a) => status(a, ev));
     const states = checked.map((s) => s.state);
-    const done = checked.find((s) => s.state === "resolved");
+    // A loop about two PRs stays open while either is still waiting on me.
+    const done = !states.includes("pending") && checked.find((s) => s.state === "resolved");
     const reason = done
       ? done.reason!
       : loop.silent && seen(states)
@@ -206,7 +247,7 @@ export function due(ledger: Followups, ev: Evidence, fresh: Signal[]): [string, 
         !l.anchors.some((a) => active.has(conv(a))),
     )
     .filter(([, l]) => {
-      const states = l.anchors.map((a) => status(a, ev).state);
+      const states = deciding(l).map((a) => status(a, ev).state);
       if (states.includes("unknown")) return false;
       const waiting = states.includes("pending") || (!l.silent && states.length > 0);
       return waiting && l.reminded.length < limit(states);
@@ -236,29 +277,44 @@ export function remind(
 
 /**
  * Opens loops for this run's asks. Notified items at or above the threshold that are requests
- * or reviews open loud loops, replacing open loops in the same conversation. Signals that came
- * straight to me and aren't covered open silent loops, unless a loop already covers their
- * conversation.
+ * or reviews open loud loops, replacing open loops in the same conversation or about the same PR
+ * or issue. Signals that came straight to me and aren't covered open silent loops, unless a loop
+ * already covers them. A loop links to the PRs and issues its messages mention that a source
+ * reported this run or an open loop tracks, and those then decide when it closes.
  */
 export function track(
   ledger: Followups,
   items: Item[],
   fresh: Signal[],
-  opts: { notified: boolean; minPriority: Priority; now: number; work: Config["work_hours"] },
+  opts: {
+    notified: boolean;
+    minPriority: Priority;
+    now: number;
+    work: Config["work_hours"];
+    /** Everything collected this run, to link mentions to. */
+    signals: Signal[];
+  },
 ): Followups {
   const next = { ...ledger };
   const at = new Date(opts.now).toISOString();
   const open = (signals: Signal[], ask: string, priority: Priority, silent: boolean) => {
-    const anchors = signals.map(anchor);
     const id = loopId(signals);
     if (next[id]) return;
-    const convs = new Set(anchors.map(conv));
+    const mentioned = new Set(signals.flatMap((s) => refs(s.text)));
+    const keys = new Set([...signals.flatMap(ids), ...mentioned]);
     const overlapping = Object.entries(next).filter(
-      ([, l]) => !l.closed && l.anchors.some((a) => convs.has(conv(a))),
+      ([, l]) => !l.closed && l.anchors.some((a) => ids(a).some((k) => keys.has(k))),
     );
     if (silent && overlapping.length) return;
     for (const [oid, l] of overlapping)
       next[oid] = { ...l, closed: { at, reason: `superseded by ${id}` } };
+    const linked = [
+      ...opts.signals.filter((s) => mentioned.has(entity(s)!)),
+      ...overlapping.flatMap(([, l]) => l.anchors.filter((a) => entity(a))),
+    ];
+    const anchors = [...signals, ...linked]
+      .map(anchor)
+      .filter((a, i, all) => all.findIndex((b) => b.key === a.key) === i);
     const url = signals.findLast((s) => s.url)?.url;
     next[id] = {
       ask,
