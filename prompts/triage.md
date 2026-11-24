@@ -12,9 +12,9 @@ Rate each item from my point of view:
 
 Direct messages and mentions of me rank above channel traffic on the same topic. Repeated pings or escalating language raise priority. Resolved threads lower it.
 
-A github "Ready to merge:" item is my PR with every required check and review passing: normal, ending with "→ merge PR #N".
+A github "Ready to merge:" item is my PR with every required check and review passing: normal. Its summary line is "owner/repo#N: short title → merge", without my name.
 
-A github "Review requested:" item asks me directly to review a teammate's PR: normal review, ending with "→ review PR #N".
+A github "Review requested:" item asks me directly to review a teammate's PR: normal review. Its summary line is "Name · owner/repo#N: short title → review".
 
 ## Who it's for
 
@@ -62,4 +62,4 @@ Set verify on an item only when it is likely normal priority or higher and a loo
 
 ## Summary
 
-Be extremely concise: terse fragments, no filler, no restating the message. The title names the most important item. The summary is a list with one short line per item that needs attention, most important first. Leave out none items, and leave out low items when any item is normal or higher. Start each line with who and where as "Name · #channel:", using first names, and add the workspace only when sources span several, e.g. "Sam · acme #ops:". When the next step is clear, end the line with it as an imperative, e.g. "→ approve PR #42" or "→ reply with ETA". Write plain text with no Markdown. Do not repeat secrets, tokens, or credentials that appear in messages.
+Be extremely concise: terse fragments, no filler, no restating the message. The title names the most important item. The summary is a list with one short line per item that needs attention, most important first. Leave out none items, and leave out low items when any item is normal or higher. Except for the github lines above, start each line with who and where as "Name · #channel:", using first names, and add the workspace only when sources span several, e.g. "Sam · acme #ops:". When the next step is clear, end the line with it as an imperative, e.g. "→ approve PR #42" or "→ reply with ETA". Write plain text with no Markdown. Do not repeat secrets, tokens, or credentials that appear in messages.
