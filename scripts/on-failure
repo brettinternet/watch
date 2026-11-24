@@ -2,6 +2,8 @@
 # Noon on_failure hook for every job: notify once when a job starts failing, e.g. an expired
 # Slack token or a failed update.
 # Noon's NOON_PREVIOUS_STATUS ignores noops, so later failures in a streak stay quiet.
+# Report every failure to a heartbeat monitor when one is installed.
+! command -v noon-healthchecks >/dev/null || noon-healthchecks || :
 case "${NOON_PREVIOUS_STATUS-}" in failed | timed_out) exit 0 ;; esac
 
 # Never read hook stdin or NOON_LOG_FILE: logs may quote message text.
