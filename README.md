@@ -192,7 +192,7 @@ actions:
         run: noon -C ~/dev/service run investigate --detach --key "$TRIAGE_KEY" --data -
 ```
 
-An action runs from this repository with the item as JSON on stdin (`action`, `key`, `priority`, `category`, `reason`, `signals`). Its environment has `TRIAGE_ACTION`, `TRIAGE_KEY`, `TRIAGE_PRIORITY`, and `TRIAGE_CATEGORY`, plus `PATH`, `HOME`, and locale variables, and no secrets. `TRIAGE_KEY` is stable per item, so Noon's `--key` drops duplicates. The notification lists the actions it runs, and a run always notifies, even below `notify.min_priority`.
+An action runs from this repository with the item as JSON on stdin (`action`, `key`, `priority`, `category`, `reason`, `signals`). Its environment has `TRIAGE_ACTION`, `TRIAGE_KEY`, `TRIAGE_PRIORITY`, and `TRIAGE_CATEGORY`, plus `PATH`, `HOME`, and locale variables, and no secrets. `TRIAGE_KEY` is stable per item, so Noon's `--key` drops duplicates. The notification lists the actions it runs, and a run always notifies, even below `notify.min_priority`, unless the action sets `quiet: true`, for actions that only tidy up.
 
 The receiving job reads the item from `$NOON_EVENT_FILE`:
 
@@ -233,7 +233,7 @@ It reads the item's key from `$NOON_EVENT_FILE` and offers these tools, all acti
 
 Before each action runs, watch records the item's Slack messages and signal keys in `.state/replies.json`, kept for 7 days, and the server touches only those. The Slack tools take a signal key from the item and can omit it when the item has one thread. The tokens stay in the server and its slack-mcp-server process, and the action environment still has no secrets. Thread `mark_read` and `save` call Slack's internal web API directly with the `xoxc`/`xoxd` session, like `agenda`, since slack-mcp-server lacks them.
 
-A job that clears small items for you:
+A job that clears small items for you, run by an action with `quiet: true` so it doesn't notify for each one:
 
 ```yaml
 # ~/dev/service/.git/noon.yaml

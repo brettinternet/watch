@@ -165,6 +165,8 @@ const Action = z
       .strict(),
     run: z.union([z.string().min(1), Argv]),
     timeout: Duration.prefault("30s"),
+    // Runs without forcing a notification, for actions that only tidy up.
+    quiet: z.boolean().default(false),
   })
   .strict();
 export type Action = z.infer<typeof Action>;

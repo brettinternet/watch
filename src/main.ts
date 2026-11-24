@@ -307,9 +307,10 @@ async function main(dryRun: boolean): Promise<number> {
   const actioned = [...new Set(runs.map((r) => r.name))];
 
   // Reminders ride along on a notification that goes out anyway; alone they go out quietly
-  // unless one was high. A run action always notifies, so it never runs unannounced.
+  // unless one was high. An action notifies unless quiet, so a loud one never runs unannounced.
   let notified = false;
-  const carrier = !!triaged && (rank(priority) >= rank(minPriority) || actioned.length > 0);
+  const loud = runs.some((r) => !r.action.quiet);
+  const carrier = !!triaged && (rank(priority) >= rank(minPriority) || loud);
   if (carrier || still.length) {
     const block = `Still open:\n${still.map((l) => `• ${l}`).join("\n")}`;
     const top = reminders[0]?.[1].priority ?? "low";
