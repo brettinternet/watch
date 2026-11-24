@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { matches, runAction } from "./actions";
+import { itemKey, matches, runAction } from "./actions";
 import { runBuiltins } from "./builtins";
 import {
   type Config,
@@ -69,8 +69,48 @@ const later = (a: Collected, b: Collected): Collected => {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+/** One line of `.state/runs.jsonl`: what a run collected, decided, and did. No message text. */
+type RunLog = {
+  at: string;
+  exit?: number;
+  afterHours?: Priority;
+  /** Signals collected per source that ran. */
+  sources?: Record<string, number>;
+  new?: number;
+  priority?: Priority;
+  items?: {
+    key: string;
+    priority: Priority;
+    category: string;
+    reason: string;
+    signals: string[];
+  }[];
+  notified?: boolean;
+  actions?: string[];
+  followups?: string[];
+  failures?: string[];
+};
+
 async function main(dryRun: boolean): Promise<number> {
   const root = resolve(import.meta.dir, "..");
+  const log: RunLog = { at: new Date().toISOString() };
+  try {
+    log.exit = await run(root, dryRun, log);
+    return log.exit;
+  } catch (e) {
+    log.exit = 1;
+    log.failures = [...(log.failures ?? []), message(e)];
+    throw e;
+  } finally {
+    if (!dryRun) {
+      const stateDir = join(root, ".state");
+      mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+      appendFileSync(join(stateDir, "runs.jsonl"), `${JSON.stringify(log)}\n`, { mode: 0o600 });
+    }
+  }
+}
+
+async function run(root: string, dryRun: boolean, log: RunLog): Promise<number> {
   const cfg: Config = loadConfig(root);
   if (sourceIds(cfg).length === 0)
     throw new Error("no sources configured; add one to triage.local.yaml");
@@ -80,6 +120,7 @@ async function main(dryRun: boolean): Promise<number> {
     ? undefined
     : cfg.notify.after_hours_min_priority;
   const minPriority = afterHours ?? cfg.notify.min_priority;
+  log.afterHours = afterHours;
   if (afterHours) console.log(`after hours: holding anything below ${afterHours}`);
 
   const stateDir = join(root, ".state");
@@ -92,6 +133,7 @@ async function main(dryRun: boolean): Promise<number> {
   const cursors = afterHours ? latest(handled, readState<Cursors>(heldPath)) : handled;
   const cursorsPath = afterHours ? heldPath : handledPath;
   const failures: string[] = [];
+  log.failures = failures;
 
   // A work-hours run reaches back to the previous one, so held messages older than max_age count.
   const lastWorkPath = join(stateDir, "last-work-run");
@@ -228,6 +270,10 @@ async function main(dryRun: boolean): Promise<number> {
         return floor ? { ...s, floor } : s;
       });
     console.log(`${all.length} unread, ${fresh.length} new`);
+    log.sources = Object.fromEntries(
+      [...ran].sort().map((id) => [id, all.filter((s) => sourceId(s) === id).length]),
+    );
+    log.new = fresh.length;
 
     if (fresh.length > 0) {
       try {
@@ -291,6 +337,14 @@ async function main(dryRun: boolean): Promise<number> {
     "none",
   );
   if (triaged) {
+    log.priority = priority;
+    log.items = items.map((i) => ({
+      key: itemKey(i),
+      priority: i.priority,
+      category: i.category,
+      reason: i.reason,
+      signals: i.signals.map((s) => s.key),
+    }));
     console.log(`\n[${priority}] ${triaged.title}\n${triaged.summary}\n`);
     for (const i of items)
       console.log(`- ${i.priority} ${i.category} (${i.signals.length}): ${i.reason}`);
@@ -306,6 +360,7 @@ async function main(dryRun: boolean): Promise<number> {
         .map(([name, action]) => ({ name, action, item })),
     );
   const actioned = [...new Set(runs.map((r) => r.name))];
+  log.actions = actioned;
 
   // Reminders ride along on a notification that goes out anyway; alone they go out quietly
   // unless one was high. A command action notifies unless quiet, so a loud one never runs
@@ -350,7 +405,7 @@ async function main(dryRun: boolean): Promise<number> {
         console.error("notification not delivered; signals stay unhandled for the next run");
         return 1;
       }
-      notified = true;
+      notified = log.notified = true;
       // A reminder clipped out of the message wasn't delivered, so it stays due.
       const remindable = new Set(reminders.map(([id]) => id));
       const shown = listed.filter(([id], i) => remindable.has(id) && body.includes(still[i]!));
@@ -396,6 +451,7 @@ async function main(dryRun: boolean): Promise<number> {
   if (todo && dryRun) console.log(`would sync follow-ups with ${todo.join(" ")}`);
   else if (todo) ledger = await syncTodos(root, { ...cfg.followups, todo }, ledger, now);
   if (!dryRun) saveFollowups(ledgerFile, ledger);
+  log.followups = changes(ledgerBefore, ledger);
   if (digesting && dryRun) console.log(`would send the follow-up digest (${listed.length})`);
   else if (digesting) writeFileSync(lastDigestPath, new Date(now).toISOString(), { mode: 0o600 });
   if (!dryRun && scheduled.length) {

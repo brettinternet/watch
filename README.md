@@ -158,6 +158,8 @@ Outside `work_hours` (weekdays 8–18 local time by default), only items at `not
 
 A run exits 0 after notifying, 78 (a Noon noop) when nothing reached the threshold, and 1 on any failure. A failed notification or LLM call leaves its messages for the next run, which reaches back to the last successful work-hours run once the failure clears. A failed look-up is only logged. A failed second call keeps the first pass but still exits 1, and Noon's `on_failure` hook notifies once when a streak of failures starts.
 
+Each run except a dry run appends one JSON line to `.state/runs.jsonl`: its exit code, signals collected per source, the items with their priority, category, reason, and signal keys, whether it notified, the actions run, follow-up changes, and failures. Message text isn't recorded. Noon prunes its run logs, but this file keeps growing, so query it with `jq`, e.g. `jq -c 'select(.notified)' .state/runs.jsonl`.
+
 ## Follow-ups
 
 Watch tracks each ask of you until the source shows it handled, and reminds you when it looks missed. There is nothing to acknowledge: acting where the ask happened closes it.
