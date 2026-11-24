@@ -25,6 +25,8 @@ export type Loop = {
   reminded: string[];
   /** Set only by the CLI. */
   snoozed?: string;
+  /** Its todo in the app `followups.todo` syncs with, which then does the reminding. */
+  todo?: { id: string; done?: true };
   closed?: { at: string; reason: string };
 };
 export type Anchor = Pick<
@@ -232,8 +234,9 @@ export function update(ledger: Followups, ev: Evidence): Followups {
 
 /**
  * Open loops due a reminder now, most important first. A loop reminds only when this run could
- * check every anchor and, if silent, it is still unread or requested. Loops in a conversation with new signals
- * this run are skipped, since the summary already covers them.
+ * check every anchor and, if silent, it is still unread or requested. Loops in a conversation with
+ * new signals this run are skipped, since the summary already covers them, and so are loops with
+ * a todo, whose app reminds instead.
  */
 export function due(ledger: Followups, ev: Evidence, fresh: Signal[]): [string, Loop][] {
   const { now } = ev;
@@ -243,6 +246,7 @@ export function due(ledger: Followups, ev: Evidence, fresh: Signal[]): [string, 
       ([, l]) =>
         !l.closed &&
         Date.parse(l.next) <= now &&
+        !l.todo &&
         (!l.snoozed || Date.parse(l.snoozed) <= now) &&
         !l.anchors.some((a) => active.has(conv(a))),
     )
@@ -403,7 +407,11 @@ function cli(args: string[]): number {
     for (const [id, l] of open) {
       const until = l.snoozed && Date.parse(l.snoozed) > now ? l.snoozed : l.next;
       const when = Date.parse(until) <= now ? "due" : `next ${new Date(until).toLocaleString()}`;
-      const tags = [l.priority, l.silent && "silent", `${l.reminded.length}/${MAX_REMINDERS}`];
+      const tags = [
+        l.priority,
+        l.silent && "silent",
+        l.todo ? "in todo app" : `${l.reminded.length}/${MAX_REMINDERS}`,
+      ];
       console.log(
         `${id}  ${stillOpen([l], now)[0]}\n      ${tags.filter(Boolean).join(" · ")} · ${when}${l.url ? ` · ${l.url}` : ""}`,
       );

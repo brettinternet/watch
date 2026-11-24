@@ -51,6 +51,7 @@ import { collectLinear } from "./sources/linear";
 import { collectSlack, openServer, type SlackServer } from "./sources/slack";
 import { collectTraffic } from "./sources/traffic";
 import { collectWeather } from "./sources/weather";
+import { syncTodos } from "./todo";
 import { verify } from "./verify";
 
 const NOOP = 78; // noon.yaml noop_exit_code: nothing new or nothing worth notifying
@@ -345,6 +346,9 @@ async function main(dryRun: boolean): Promise<number> {
       });
   }
   for (const c of changes(ledgerBefore, ledger)) console.log(`follow-up ${c}`);
+  const { todo } = cfg.followups;
+  if (todo && dryRun) console.log(`would sync follow-ups with ${todo.join(" ")}`);
+  else if (todo) ledger = await syncTodos(root, { ...cfg.followups, todo }, ledger, now);
   if (!dryRun) saveFollowups(ledgerFile, ledger);
   if (!dryRun && scheduled.length) {
     const next: Collected = {};

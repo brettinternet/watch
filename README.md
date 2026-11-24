@@ -167,6 +167,16 @@ Watch tracks each ask of you until the source shows it handled, and reminds you 
 
 Jira asks aren't tracked yet. `task followups` lists open and recently closed loops; `task followups -- done <id>` dismisses one and `-- snooze <id> 1d` defers it. The ledger lives in `.state/followups.json`.
 
+### Todo app
+
+Set `followups.todo` to an adapter command, e.g. `[scripts/reminders, --list, Watch]`, to mirror loud loops to Apple Reminders:
+
+- Each open loud loop gets a reminder due at its first reminder time, with its link in the notes. Watch stops reminding it and leaves that to the app.
+- Completing, deleting, or moving the reminder out of the list closes the loop. A loop watch closes, for example when you reply, completes its reminder.
+- A failed call is logged and retried next run; until a loop has a reminder, watch reminds as usual.
+
+The first call asks for permission to control Reminders. Grant it to the app that runs watch, e.g. from a terminal with `scripts/reminders check x`, and to whatever runs the scheduled Noon job, under System Settings › Privacy & Security › Automation. Other apps can use the same protocol, which `scripts/reminders` documents: `add` reads the loop as JSON on stdin and prints an id, `done <id>` completes it, and `check <id>...` prints the ids completed or gone. The adapter runs without secrets in its environment.
+
 ## Actions
 
 ```yaml

@@ -33,12 +33,17 @@ const INHERIT = [
   "TZ",
 ];
 
-export function actionEnv(env: Record<string, string | undefined>, name: string, item: Item) {
+/** The environment for commands that act on untrusted message text: no secrets. */
+export function minimalEnv(env: Record<string, string | undefined>) {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(env))
     if (v && (INHERIT.includes(k) || k.startsWith("XDG_"))) out[k] = v;
+  return out;
+}
+
+export function actionEnv(env: Record<string, string | undefined>, name: string, item: Item) {
   return {
-    ...out,
+    ...minimalEnv(env),
     TRIAGE_ACTION: name,
     TRIAGE_KEY: itemKey(item),
     TRIAGE_PRIORITY: item.priority,

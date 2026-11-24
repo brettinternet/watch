@@ -1,0 +1,56 @@
+#!/usr/bin/osascript -l JavaScript
+// Follow-ups adapter for Apple Reminders, set as `followups.todo` in triage.local.yaml.
+// Usage: scripts/reminders [--list <name>] add | done <id> | check <id>...
+//   add    reads a follow-up as JSON on stdin ({ id, ask, priority, url, due }), adds it to the
+//          list (default Watch, created when missing), and prints the reminder's id
+//   done   completes a reminder, if it is still in the list
+//   check  prints the ids that are completed or no longer in the list
+// Lookups stay within the list: searching every reminder by id can take minutes.
+// Any other failure, such as missing Reminders access, exits nonzero so watch changes nothing.
+ObjC.import("Foundation");
+
+const PRIORITY = { emergency: 1, high: 1, normal: 5, low: 9 }; // Reminders: 1 high … 9 low
+
+function stdin() {
+  const data = $.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile;
+  return $.NSString.alloc.initWithDataEncoding(data, $.NSUTF8StringEncoding).js;
+}
+
+function run(argv) {
+  let name = "Watch";
+  if (argv[0] === "--list") {
+    name = argv[1];
+    argv = argv.slice(2);
+  }
+  const [verb, ...ids] = argv;
+  const app = Application("Reminders");
+  const list = app.lists.byName(name);
+
+  if (verb === "add" && ids.length === 0) {
+    const f = JSON.parse(stdin());
+    if (!list.exists()) app.lists.push(app.List({ name }));
+    const due = new Date(f.due);
+    const reminder = app.Reminder({
+      name: f.ask,
+      body: [f.url, `watch follow-up ${f.id}`].filter(Boolean).join("\n"),
+      dueDate: due,
+      remindMeDate: due,
+      priority: PRIORITY[f.priority] ?? 0,
+    });
+    list.reminders.push(reminder);
+    return reminder.id();
+  }
+  if (verb === "done" && ids.length === 1) {
+    const reminder = list.exists() ? list.reminders.byId(ids[0]) : undefined;
+    if (reminder?.exists()) reminder.completed = true;
+    return "";
+  }
+  if (verb === "check" && ids.length > 0) {
+    // Two bulk reads instead of two per id.
+    const all = list.exists() ? list.reminders.id() : [];
+    const completed = list.exists() ? list.reminders.completed() : [];
+    const open = new Set(all.filter((_, i) => !completed[i]));
+    return ids.filter((id) => !open.has(id)).join("\n");
+  }
+  throw new Error("usage: scripts/reminders [--list <name>] add | done <id> | check <id>...");
+}

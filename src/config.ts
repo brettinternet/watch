@@ -224,6 +224,14 @@ export const Config = z
     // Email → minimum priority for messages from that person, in any source
     vips: floors(z.email(), (k) => k.toLowerCase()),
     actions: z.record(Name, Action).default({}),
+    followups: z
+      .object({
+        // Mirrors loud follow-ups to a todo app; see scripts/reminders for the protocol
+        todo: Argv.optional(),
+        timeout: Duration.prefault("30s"),
+      })
+      .strict()
+      .prefault({}),
   })
   .strict();
 export type Config = z.infer<typeof Config>;
