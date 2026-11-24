@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -75,17 +75,15 @@ export type Mine = { channel: string; ts: string; thread?: string };
 /** Stream of thread replies found by search, which carry no unread state. */
 export const THREAD_STREAM = "thread-mentions";
 
-/** Starts this workspace's server, which only exposes read tools. Caller must `close()` it. */
-export async function openServer(name: string, ctx: CollectCtx): Promise<SlackServer> {
-  const cacheDir = join(ctx.stateDir, "slack", name);
-  mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
+/** Starts a workspace's slack-mcp-server with `env`. Caller must `close()` the client. */
+export async function connectServer(name: string, env: Record<string, string>): Promise<Client> {
   const transport = new StdioClientTransport({
     command: "slack-mcp-server",
     args: ["--transport", "stdio"],
-    env: serverEnv(name, ctx.env, cacheDir),
+    env,
     stderr: "inherit",
   });
-  const client = new Client({ name: "watch-triage", version: "1" });
+  const client = new Client({ name: "watch", version: "1" });
   try {
     await client.connect(transport, { timeout: TIMEOUT_MS });
   } catch (e) {
@@ -96,16 +94,45 @@ export async function openServer(name: string, ctx: CollectCtx): Promise<SlackSe
       `${msg} — if the log shows invalid_auth, the stealth tokens expired; re-run: task setup:slack ${name}`,
     );
   }
-  const call: Call = async (tool, args) => {
-    const result = await client.callTool({ name: tool, arguments: args }, undefined, {
-      timeout: TIMEOUT_MS,
-    });
-    const text = (result.content as { type: string; text?: string }[])
-      .flatMap((c) => (c.type === "text" && c.text ? [c.text] : []))
-      .join("");
-    if (result.isError) throw new Error(`${tool}: ${text}`);
-    return parseCsv(text);
-  };
+  return client;
+}
+
+/** Calls a tool and returns its text, throwing on a tool error. */
+export async function callText(
+  client: Client,
+  tool: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  const result = await client.callTool({ name: tool, arguments: args }, undefined, {
+    timeout: TIMEOUT_MS,
+  });
+  const text = (result.content as { type: string; text?: string }[])
+    .flatMap((c) => (c.type === "text" && c.text ? [c.text] : []))
+    .join("");
+  if (result.isError) throw new Error(`${tool}: ${text}`);
+  return text;
+}
+
+/**
+ * The cache for servers that agents use, apart from the one triage reads so they never write
+ * it mid-run; seeded from it to skip the slow first sync.
+ */
+export function agentCacheDir(stateDir: string, name: string): string {
+  const triageCache = join(stateDir, "slack", name);
+  const cacheDir = join(triageCache, "mcp");
+  mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
+  for (const f of ["users_cache.json", "channels_cache_v2.json"])
+    if (!existsSync(join(cacheDir, f)) && existsSync(join(triageCache, f)))
+      copyFileSync(join(triageCache, f), join(cacheDir, f));
+  return cacheDir;
+}
+
+/** Starts this workspace's server, which only exposes read tools. Caller must `close()` it. */
+export async function openServer(name: string, ctx: CollectCtx): Promise<SlackServer> {
+  const cacheDir = join(ctx.stateDir, "slack", name);
+  mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
+  const client = await connectServer(name, serverEnv(name, ctx.env, cacheDir));
+  const call: Call = async (tool, args) => parseCsv(await callText(client, tool, args));
   try {
     const channels = readChannels(cacheDir);
     const me = await whoAmI(call, ctx.since, channels);

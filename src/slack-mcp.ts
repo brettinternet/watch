@@ -3,10 +3,9 @@
  * workspace's tokens. Reads config and the channel cache from the primary checkout, since
  * worktrees have neither.
  */
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "./config";
-import { serverEnv } from "./sources/slack";
+import { agentCacheDir, serverEnv } from "./sources/slack";
 
 const primary = process.argv[2]!;
 const cfg = loadConfig(primary);
@@ -15,14 +14,7 @@ const name = process.argv[3] ?? slack[0];
 if (!name || !slack.includes(name))
   throw new Error(`no slack source ${name ?? ""} in triage.local.yaml (have: ${slack.join(", ")})`);
 
-// Its own cache, so it never writes the file triage is reading; seeded to skip the slow first sync.
-const triageCache = join(primary, ".state", "slack", name);
-const cacheDir = join(triageCache, "mcp");
-mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
-for (const f of ["users_cache.json", "channels_cache_v2.json"])
-  if (!existsSync(join(cacheDir, f)) && existsSync(join(triageCache, f)))
-    copyFileSync(join(triageCache, f), join(cacheDir, f));
-const env = serverEnv(name, process.env, cacheDir);
+const env = serverEnv(name, process.env, agentCacheDir(join(primary, ".state"), name));
 // Read-only by default: message text is untrusted, and marking read would hide messages from
 // triage. SLACK_<NAME>_ENABLED_TOOLS overrides; `all` enables every tool, including posting
 // (SLACK_<NAME>_ADD_MESSAGE_TOOL may still limit channels).

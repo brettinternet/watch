@@ -50,6 +50,17 @@ tasks:
       -p "{{.PRIMARY}}/.env.schema" -p "{{.PRIMARY}}/.env.local"
       -- bun src/slack-mcp.ts "{{.PRIMARY}}" {{.CLI_ARGS}}
 
+  slack:reply:
+    desc: Serve Slack replies to one triaged item's threads for an action's agent ($NOON_EVENT_FILE)
+    silent: true
+    vars:
+      PRIMARY:
+        sh: dirname "$(git rev-parse --path-format=absolute --git-common-dir)"
+    cmd: >-
+      mise exec -- varlock run --no-redact-stdout --filter "SLACK_*"
+      -p "{{.PRIMARY}}/.env.schema" -p "{{.PRIMARY}}/.env.local"
+      -- bun src/slack-reply.ts "{{.PRIMARY}}"
+
   test:
     desc: Run unit tests
     cmd: mise exec bun -- bun test
