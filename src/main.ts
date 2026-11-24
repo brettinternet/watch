@@ -296,10 +296,20 @@ async function main(dryRun: boolean): Promise<number> {
   }
   if (still.length) console.log(`\nstill open:\n${still.map((l) => `- ${l}`).join("\n")}`);
 
+  // After hours, items below the threshold are held for work hours, so their actions wait too.
+  const runs = items
+    .filter((i) => !afterHours || rank(i.priority) >= rank(afterHours))
+    .flatMap((item) =>
+      Object.entries(cfg.actions)
+        .filter(([, action]) => matches(action, item))
+        .map(([name, action]) => ({ name, action, item })),
+    );
+  const actioned = [...new Set(runs.map((r) => r.name))];
+
   // Reminders ride along on a notification that goes out anyway; alone they go out quietly
-  // unless one was high.
+  // unless one was high. A run action always notifies, so it never runs unannounced.
   let notified = false;
-  const carrier = !!triaged && rank(priority) >= rank(minPriority);
+  const carrier = !!triaged && (rank(priority) >= rank(minPriority) || actioned.length > 0);
   if (carrier || still.length) {
     const block = `Still open:\n${still.map((l) => `• ${l}`).join("\n")}`;
     const top = reminders[0]?.[1].priority ?? "low";
@@ -307,7 +317,16 @@ async function main(dryRun: boolean): Promise<number> {
       ? [
           priority,
           triaged.title,
-          still.length ? clip(`${triaged.summary}\n${block}`, 1024) : triaged.summary,
+          clip(
+            [
+              triaged.summary,
+              actioned.length && `Actions: ${actioned.join(", ")}`,
+              still.length && block,
+            ]
+              .filter(Boolean)
+              .join("\n"),
+            1024,
+          ),
           // Link the newest linkable message of the first top-priority item.
           items.find((i) => i.priority === priority)?.signals.findLast((s) => s.url)?.url,
         ]
@@ -342,15 +361,11 @@ async function main(dryRun: boolean): Promise<number> {
   }
 
   if (triaged) {
-    for (const item of items) {
-      if (afterHours && rank(item.priority) < rank(afterHours)) continue; // held for work hours
-      for (const [name, action] of Object.entries(cfg.actions)) {
-        if (!matches(action, item)) continue;
-        if (dryRun) console.log(`would run action ${name} for: ${item.reason}`);
-        else {
-          const err = await runAction(root, name, action, item);
-          if (err) failures.push(err);
-        }
+    for (const { name, action, item } of runs) {
+      if (dryRun) console.log(`would run action ${name} for: ${item.reason}`);
+      else {
+        const err = await runAction(root, name, action, item);
+        if (err) failures.push(err);
       }
     }
     if (!dryRun) writeState(cursorsPath, prune(advance(cursors, fresh), minTs, windows));
