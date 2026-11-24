@@ -231,12 +231,13 @@ export const Config = z
         timeout: Duration.prefault("30s"),
         // Work hours before the first reminder (at most 1h for high asks), then between reminders
         first: Duration.prefault("4h"),
-        again: Duration.prefault("8h"),
+        again: Duration.prefault("12h"),
         // Reminders per follow-up before it expires; 0 leaves reminding to the digest or todo app
         reminders: z.number().int().min(0).prefault(2),
         // Cron, local time: one "Still open" notification listing every waiting follow-up, at the
-        // first work-hours run after each occurrence. Follow-ups then stay open until handled or 7d.
-        digest: Cron.optional(),
+        // first work-hours run after each occurrence, or false. With a digest, follow-ups stay open
+        // until handled or 7d.
+        digest: z.union([Cron, z.literal(false)]).prefault("0 9 * * 1-5"),
       })
       .strict()
       .prefault({}),

@@ -275,8 +275,8 @@ async function main(dryRun: boolean): Promise<number> {
   const lastDigest = existsSync(lastDigestPath)
     ? Date.parse(readFileSync(lastDigestPath, "utf8")) || undefined
     : undefined;
-  const digesting =
-    !afterHours && !!cfg.followups.digest && due(cfg.followups.digest, lastDigest, now);
+  const { digest: digestAt } = cfg.followups;
+  const digesting = !afterHours && digestAt !== false && due(digestAt, lastDigest, now);
   const listed = digesting ? digest(ledger, evidence) : reminders;
   const still = stillOpen(
     listed.map(([, l]) => l),

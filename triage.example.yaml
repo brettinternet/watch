@@ -46,11 +46,11 @@ sources:
 #   investigate:
 #     when: { categories: [incident], min_priority: high }
 #     run: noon -C ~/dev/service run investigate --detach --key "$TRIAGE_KEY" --data -
-# Follow-ups: mirror loud ones to Apple Reminders, which then does the reminding, and/or
-# replace per-follow-up reminders with a weekday-morning digest.
+# Follow-ups: mirror loud ones to Apple Reminders, which then does the reminding, and tune
+# reminders; reminders: 0 leaves only the weekday-morning digest.
 # followups:
 #   todo: [scripts/reminders, --list, Watch]
 #   first: 4h
-#   again: 8h
-#   reminders: 0
-#   digest: "0 9 * * 1-5"
+#   again: 12h
+#   reminders: 2
+#   digest: "0 9 * * 1-5" # or false

@@ -76,9 +76,13 @@ test("a notified ask reminds on the work-hours clock twice while unread, once af
 
   ledger = remind(ledger, [first[0]![0]], at(23, 11));
   expect(due(ledger, unread(at(23, 17)), [])).toEqual([]);
-  expect(reason(update(ledger, evidence(at(24, 9), [], [])))).toBe("expired");
-  ledger = remind(ledger, [first[0]![0]], at(24, 9)); // Tuesday 9:00, 8 work hours on
-  ledger = update(ledger, unread(at(24, 17))); // Tuesday 17:00, next due
+  // Twelve work hours on is Tuesday 13:00. Without a digest, a read ask then expires.
+  const noDigest = { ...settings, digest: false as const };
+  expect(due(ledger, unread(at(24, 12)), [])).toEqual([]);
+  expect(reason(update(ledger, evidence(at(24, 13), [], []), noDigest))).toBe("expired");
+  ledger = remind(ledger, [first[0]![0]], at(24, 13));
+  expect(open(update(ledger, unread(at(25, 15))))).toHaveLength(1); // the digest keeps it
+  ledger = update(ledger, unread(at(25, 15)), noDigest); // Wednesday 15:00, next due
   expect(open(ledger)).toEqual([]);
   expect(reason(ledger)).toBe("expired");
 });
@@ -214,7 +218,7 @@ test("with reminders off, a digest lists what still waits and keeps it open unti
   const later = at(24, 9);
   const dm = slack("can you approve the rollout?", asked);
   const quiet = slack("got a sec?", asked, { channel: "@kim", key: "acme:@kim:1" });
-  const cfg = Config.shape.followups.parse({ reminders: 0, digest: "0 9 * * 1-5" });
+  const cfg = Config.shape.followups.parse({ reminders: 0 });
   const opened = { ...opts(asked), first: cfg.first };
   const ledger = track({}, [item([dm], "normal", "request")], [dm, quiet], opened);
   const unread = evidence(later, [dm, quiet], []);
