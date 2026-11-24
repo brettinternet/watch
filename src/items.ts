@@ -5,9 +5,13 @@ import type { Signal } from "./signal";
 
 const higher = (a: Priority, b: Priority | undefined) => (b && rank(b) > rank(a) ? b : a);
 
-/** The minimum priority `vips` and `priority_channels` set for a signal, if any. */
+/**
+ * The minimum priority `vips` and `priority_channels` set for a signal, if any. A VIP's floor
+ * skips Slack messages addressed to no one or to others, e.g. thanking someone else in a channel.
+ */
 export function floorOf(cfg: Config, s: Signal): Priority | undefined {
-  const vip = s.email ? cfg.vips[s.email.toLowerCase()] : undefined;
+  const forOthers = s.kind === "slack" && (!s.to || s.to === "others");
+  const vip = s.email && !forOthers ? cfg.vips[s.email.toLowerCase()] : undefined;
   const channel =
     s.kind === "slack"
       ? cfg.sources.slack[s.source]?.priority_channels[s.channel.replace(/^#/, "")]

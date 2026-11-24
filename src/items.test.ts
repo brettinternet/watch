@@ -25,10 +25,31 @@ test("VIPs and priority channels match regardless of case or #", () => {
     vips: { "Sam@Acme.com": "high", "pat@acme.com": null },
     sources: { slack: { acme: { priority_channels: { "#ops": "low" } } } },
   });
-  expect(floorOf(cfg, sig("#ops", "Sam", "hi", "sam@ACME.com"))).toBe("high");
+  const me = { to: "me" };
+  expect(floorOf(cfg, { ...sig("#ops", "Sam", "hi", "sam@ACME.com"), ...me })).toBe("high");
   expect(floorOf(cfg, sig("#ops", "Ana", "hi"))).toBe("low");
-  expect(floorOf(cfg, sig("#dev", "Pat", "hi", "pat@acme.com"))).toBe("normal");
-  expect(floorOf(cfg, sig("#dev", "Ana", "hi", "ana@acme.com"))).toBeUndefined();
+  expect(floorOf(cfg, { ...sig("#dev", "Pat", "hi", "pat@acme.com"), ...me })).toBe("normal");
+  expect(floorOf(cfg, { ...sig("#dev", "Ana", "hi", "ana@acme.com"), ...me })).toBeUndefined();
+});
+
+test("a VIP's floor skips Slack messages not addressed to me", () => {
+  const cfg = Config.parse({
+    version: 1,
+    llm: {},
+    categories: { fyi: "x" },
+    notify: {},
+    vips: { "sam@acme.com": "high" },
+    sources: { slack: { acme: { priority_channels: { ops: "low" } } } },
+  });
+  const sam = (channel: string, to?: string) => ({
+    ...sig(channel, "Sam", "thanks!", "sam@acme.com"),
+    ...(to ? { to } : {}),
+  });
+  expect(floorOf(cfg, sam("#dev"))).toBeUndefined();
+  expect(floorOf(cfg, sam("#dev", "others"))).toBeUndefined();
+  expect(floorOf(cfg, sam("#ops"))).toBe("low");
+  expect(floorOf(cfg, sam("#dev", "after_me"))).toBe("high");
+  expect(floorOf(cfg, { ...sam("PR #1"), kind: "github" })).toBe("high");
 });
 
 test("a VIP message the LLM rates none or skips still notifies and is summarized", () => {

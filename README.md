@@ -119,6 +119,8 @@ sources:
 
 A message from a VIP, matched by email in any source, or in a priority channel always reaches the summary at no less than the set priority (`low`, `normal`, or `high`). The code enforces this after the LLM, which is also told about it: an item rated lower is raised, and a message the LLM skipped becomes its own item. Raised items count toward `notify.min_priority`, actions, and the after-hours threshold, so a `high` VIP notifies overnight and a `normal` one waits for the morning summary. VIPs skip `exclude_channels`.
 
+A VIP's Slack message gets its floor only when it's for you: a DM, a mention of you or your group, @here, your thread, a group DM, or a reply soon after your own message. A channel message that mentions only others, or no one, such as thanking someone else, is rated by the LLM like anyone's.
+
 Both apply only to messages a source collects. With `mentions_only` or `channel_types`, or past `max_channels`, a priority channel's messages may never arrive. Jira shows an author's email only when their profile allows it, so a VIP may go unmatched there. `task doctor` warns about VIP emails and priority channels missing from the Slack caches.
 
 ## Token automation
