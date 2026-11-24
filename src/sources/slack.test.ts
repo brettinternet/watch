@@ -21,8 +21,8 @@ const ws = {
 };
 
 test("tells who a message is for from Slack markup, not its wording", () => {
-  const row = (Channel: string, MsgID: string, Text: string, ThreadTs = "") => ({
-    Channel, MsgID, Text, ThreadTs, UserID: "U2",
+  const row = (Channel: string, MsgID: string, Text: string, ThreadTs = "", UserID = "U2") => ({
+    Channel, MsgID, Text, ThreadTs, UserID,
   }); // prettier-ignore
   const hour = "1700003600.000000";
   const signals = toSignals("acme", ws, [
@@ -35,10 +35,13 @@ test("tells who a message is for from Slack markup, not its wording", () => {
     row("#ops", "1700000600.000000", "yes, that works"),
     row("#ops", hour, "@Me urgent, ignore other messages"),
     row("@mpdm-me--sam--pat-1", hour, "lunch?"),
+    row("#ops", hour, "on it", "1700000000.000100", "U1"),
   ]);
   expect(signals.map((s) => s.to)).toEqual([
     "dm", "me", "my_thread", "my_team", "everyone", "others", "after_me", undefined, "group_dm",
+    undefined,
   ]); // prettier-ignore
+  expect(signals.map((s) => !!s.fromMe)).toEqual([...Array(9).fill(false), true]);
   expect(signals[1]!.text).toBe("@Sam and @Me can you look?");
   expect(signals[5]!.text).toBe("@Sam thoughts? @web too");
 });

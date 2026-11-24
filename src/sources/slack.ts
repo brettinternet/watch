@@ -387,7 +387,10 @@ export function toSignals(
       const url = r.Permalink || link?.(r.Channel!, r.MsgID!, thread); // search rows carry one
       // The server reports an uncached channel by its id.
       const kind = kinds.get(r.Channel!) ?? (/^D[A-Z0-9]+$/.test(r.Channel!) ? "dm" : "");
-      const to = addressedTo(ws.me, r.Channel!, kind, r.MsgID!, thread, r.Text ?? "");
+      const fromMe = !!ws.me.id && r.UserID === ws.me.id;
+      const to = fromMe
+        ? undefined
+        : addressedTo(ws.me, r.Channel!, kind, r.MsgID!, thread, r.Text ?? "");
       return {
         key: `${name}:${r.Channel}:${r.MsgID}`,
         source: name,
@@ -402,6 +405,7 @@ export function toSignals(
         ...(url ? { url } : {}),
         ...(to ? { to } : {}),
         ...(r.BotName || user?.bot ? { bot: true as const } : {}),
+        ...(fromMe ? { fromMe: true as const } : {}),
       };
     });
 }

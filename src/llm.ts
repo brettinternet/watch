@@ -69,6 +69,7 @@ const line = (cfg: Config, s: Signal, extra: Record<string, string>) =>
     source: s.source,
     channel: s.channel,
     author: s.author,
+    ...(s.fromMe ? { from_me: true } : {}),
     time: s.time,
     ...(s.thread ? { in_thread: true } : {}),
     ...(s.to ? { to: s.to } : {}),

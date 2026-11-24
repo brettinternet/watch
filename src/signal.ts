@@ -23,6 +23,8 @@ export type Signal = {
   to?: string;
   /** Posted by an app or bot, when the source can tell. */
   bot?: true;
+  /** Posted by me, as in a thread looked up for context. */
+  fromMe?: true;
   /** Minimum priority from `vips` or `priority_channels`, set after collection. */
   floor?: Priority;
 };
