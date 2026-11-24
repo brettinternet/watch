@@ -220,7 +220,7 @@ To let the agent answer, add the `slack-reply` MCP server to the receiving repos
 }
 ```
 
-It reads the item's key from `$NOON_EVENT_FILE` and offers two tools, `reply` (posts in the thread of one of the item's Slack messages) and `react` (adds an emoji to one). Both post as you. Before each action runs, watch records the item's Slack messages in `.state/replies.json`, kept for 7 days, and the server writes only there. The tools take a signal key from the item and can omit it when the item has one thread. The tokens stay in the server's slack-mcp-server process, and the action environment still has no secrets.
+It reads the item's key from `$NOON_EVENT_FILE` and offers two tools, `reply` (posts in the thread of one of the item's Slack messages) and `react` (adds an emoji to one, or with `thread`, to its thread root). Both post as you. Before each action runs, watch records the item's Slack messages in `.state/replies.json`, kept for 7 days, and the server writes only there. The tools take a signal key from the item and can omit it when the item has one thread. The tokens stay in the server's slack-mcp-server process, and the action environment still has no secrets.
 
 A message can steer the agent into posting what it read, such as repository code, to that thread, where everyone in it can read it. Use it only where that's acceptable.
 

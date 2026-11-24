@@ -75,10 +75,16 @@ server.registerTool(
 server.registerTool(
   "react",
   {
-    description: "Add an emoji reaction as me to a message from the triage item.",
-    inputSchema: { emoji: z.string().min(1).describe("Emoji name, e.g. eyes"), message },
+    description:
+      "Add an emoji reaction as me to a message from the triage item, or its thread's root.",
+    inputSchema: {
+      emoji: z.string().min(1).describe("Emoji name, e.g. eyes"),
+      message,
+      thread: z.boolean().optional().describe("React to the message's thread root instead"),
+    },
   },
-  ({ emoji, message }) => run(message, (t) => ["reactions_add", { timestamp: t.ts, emoji }]),
+  ({ emoji, message, thread }) =>
+    run(message, (t) => ["reactions_add", { timestamp: thread ? t.thread : t.ts, emoji }]),
 );
 server.server.onclose = () => {
   for (const c of clients.values()) c.then((x) => x.close()).catch(() => {});
