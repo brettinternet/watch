@@ -140,8 +140,19 @@ const loopId = (signals: Signal[]) =>
     .digest("hex")
     .slice(0, 12);
 
-const line = (signals: Signal[], reason: string) =>
-  `${signals.at(-1)!.author} · ${signals[0]!.channel}: ${reason}`;
+/**
+ * One PR's line comes from its number and title, since the LLM's reason can read the same for
+ * every PR. The author is left out of ready PRs, which are always mine.
+ */
+const line = (signals: Signal[], reason: string) => {
+  const last = signals.at(-1)!;
+  if (last.kind === "github" && last.stream && signals.every((s) => s.stream === last.stream)) {
+    const who = isReview(last) ? `${last.author} · ` : "";
+    const text = last.url ? last.text.replace(` — ${last.url}`, "") : last.text;
+    return `${who}${last.stream.replace(/:[a-z]+$/, "")}: ${text}`;
+  }
+  return `${last.author} · ${signals[0]!.channel}: ${reason}`;
+};
 
 type State = "resolved" | "pending" | "open" | "unsure" | "unknown";
 
