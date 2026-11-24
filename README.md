@@ -194,6 +194,27 @@ actions:
 
 An action runs from this repository with the item as JSON on stdin (`action`, `key`, `priority`, `category`, `reason`, `signals`). Its environment has `TRIAGE_ACTION`, `TRIAGE_KEY`, `TRIAGE_PRIORITY`, and `TRIAGE_CATEGORY`, plus `PATH`, `HOME`, and locale variables, and no secrets. `TRIAGE_KEY` is stable per item, so Noon's `--key` drops duplicates. The notification lists the actions it runs, and a run always notifies, even below `notify.min_priority`, unless the action sets `quiet: true`, for actions that only tidy up.
 
+`when` also takes `max_priority` and `after`, a local hour from which the action applies.
+
+### Built-in actions
+
+An action with `do` instead of `run` acts inside triage, with no agent, so it works the same on every host. Built-in actions never notify.
+
+| Step        | Does                                                                                                                                                                            |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mark_read` | Marks the item's Slack messages read, each channel only up to where every unread message before it is also being cleared, and only while still unread. Thread replies are left. |
+| `dismiss`   | Closes the item's follow-ups.                                                                                                                                                   |
+| `snooze`    | Holds off the item's follow-ups until the next work-hours start.                                                                                                                |
+
+`mark_read` skips a channel whose unreads weren't all scanned: it hit `max_messages_per_channel`, is in `exclude_channels`, or the source is `mentions_only`.
+
+[`triage.yaml`](triage.yaml) ships two, so every clone gets them on its next pull: `clear` marks read and dismisses `fyi` and `noise` items up to `low`, and `tomorrow` snoozes `low` and `normal` requests and reviews from 3pm. Turn one off in `triage.local.yaml`:
+
+```yaml
+actions:
+    clear: null
+```
+
 The receiving job reads the item from `$NOON_EVENT_FILE`:
 
 ```yaml
@@ -232,23 +253,6 @@ It reads the item's key from `$NOON_EVENT_FILE` and offers these tools, all acti
 | `dismiss`, `snooze` | Closes, or holds off for `for` (e.g. `4h`), the follow-ups on the item's signals.                                                                                               |
 
 Before each action runs, watch records the item's Slack messages and signal keys in `.state/replies.json`, kept for 7 days, and the server touches only those. The Slack tools take a signal key from the item and can omit it when the item has one thread. The tokens stay in the server and its slack-mcp-server process, and the action environment still has no secrets. Thread `mark_read` and `save` call Slack's internal web API directly with the `xoxc`/`xoxd` session, like `agenda`, since slack-mcp-server lacks them.
-
-A job that clears small items for you, run by an action with `quiet: true` so it doesn't notify for each one:
-
-```yaml
-# ~/dev/service/.git/noon.yaml
-jobs:
-    handle:
-        requests: each
-        prompt: |
-            Read the triage item in the JSON file at $NOON_EVENT_FILE. Use the slack-reply tools;
-            read_thread first if the item alone doesn't make it clear.
-            - Trivial (thanks, acknowledgments, FYIs, automated notices, nothing asked of me):
-              mark_read each Slack message, then dismiss.
-            - Not urgent, can wait, and `date` shows it's past 3pm: snooze until 8am the next
-              workday (Mon-Fri), as a duration in hours, e.g. 17h.
-            - Otherwise change nothing.
-```
 
 A message can steer the agent into posting what it read, such as repository code, to that thread, where everyone in it can read it. Use it only where that's acceptable.
 

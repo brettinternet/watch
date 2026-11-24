@@ -101,6 +101,25 @@ export type Mine = { channel: string; ts: string; thread?: string };
 /** Stream of thread replies found by search, which carry no unread state. */
 export const THREAD_STREAM = "thread-mentions";
 
+/**
+ * Channel id → last-read ts ("" if never) of each channel with unread messages, scanned with the
+ * source's own filters. Fixed-width "seconds.micros" timestamps compare as strings.
+ */
+export async function lastRead(
+  client: Client,
+  source: SlackSource | undefined,
+): Promise<Map<string, string>> {
+  const text = await callText(client, "conversations_unreads", {
+    include_messages: false,
+    channel_types: source?.channel_types,
+    mentions_only: source?.mentions_only,
+    max_channels: source?.max_channels,
+  });
+  // xoxp tokens prepend a note to the CSV.
+  const rows = parseCsv(text.slice(Math.max(0, text.indexOf("ChannelID"))));
+  return new Map(rows.map((r) => [r.ChannelID ?? "", r.LastRead ?? ""]));
+}
+
 /** Starts a workspace's slack-mcp-server with `env`. Caller must `close()` the client. */
 export async function connectServer(name: string, env: Record<string, string>): Promise<Client> {
   const transport = new StdioClientTransport({

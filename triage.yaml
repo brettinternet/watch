@@ -31,3 +31,12 @@ notify:
     normal: [--pushover-priority, normal]
     high: [--pushover-priority, high]
     emergency: [--pushover-priority, emergency]
+
+# Built-in actions; see README. A clone drops one with `<name>: null` under actions.
+actions:
+  clear: # trivial: mark read and close its follow-ups
+    when: { categories: [fyi, noise], min_priority: none, max_priority: low }
+    do: [mark_read, dismiss]
+  tomorrow: # late in the day and can wait: hold its reminders until the next workday
+    when: { categories: [request, review], min_priority: low, max_priority: normal, after: 15 }
+    do: [snooze]

@@ -154,6 +154,9 @@ export const KINDS = [
   "feed",
 ] as const;
 
+/** What watch itself can do with an item; see `runBuiltins`. */
+export const BUILTINS = ["mark_read", "dismiss", "snooze"] as const;
+
 const Action = z
   .object({
     when: z
@@ -161,14 +164,19 @@ const Action = z
         categories: z.array(Name).min(1).optional(),
         sources: z.array(z.string()).min(1).optional(), // kind/name, e.g. slack/acme
         min_priority: Priority.default("high"),
+        max_priority: Priority.optional(),
+        after: z.number().int().min(0).max(23).optional(), // local hour
       })
       .strict(),
-    run: z.union([z.string().min(1), Argv]),
+    // Either a command, which gets the item on stdin, or built-ins, which never notify.
+    run: z.union([z.string().min(1), Argv]).optional(),
+    do: z.array(z.enum(BUILTINS)).min(1).optional(),
     timeout: Duration.prefault("30s"),
-    // Runs without forcing a notification, for actions that only tidy up.
+    // Runs without forcing a notification, for commands that only tidy up.
     quiet: z.boolean().default(false),
   })
-  .strict();
+  .strict()
+  .refine((a) => !a.run !== !a.do, { message: "set exactly one of run or do" });
 export type Action = z.infer<typeof Action>;
 
 export const Config = z
@@ -225,7 +233,13 @@ export const Config = z
       .prefault({}),
     // Email → minimum priority for messages from that person, in any source
     vips: floors(z.email(), (k) => k.toLowerCase()),
-    actions: z.record(Name, Action).default({}),
+    // A clone drops a shared action by setting it to null.
+    actions: z
+      .record(Name, Action.nullable())
+      .default({})
+      .transform((r) =>
+        Object.fromEntries(Object.entries(r).filter((e): e is [string, Action] => e[1] !== null)),
+      ),
     followups: z
       .object({
         // Mirrors loud follow-ups to a todo app; see scripts/reminders for the protocol
@@ -276,6 +290,15 @@ export function afterWork(work: Config["work_hours"], from: number, ms: number):
   let at = from;
   for (let left = ms; left > 0; at += STEP_MS) if (inWorkHours(work, new Date(at))) left -= STEP_MS;
   return at;
+}
+
+/** The start of the next work day after `from`'s, or the next midnight without work hours. */
+export function nextWorkStart(work: Config["work_hours"], from: number): number {
+  const at = new Date(from);
+  at.setHours(work?.start ?? 0, 0, 0, 0);
+  do at.setDate(at.getDate() + 1);
+  while (work && !work.days.includes(DAYS[at.getDay()]!));
+  return at.getTime();
 }
 
 export const CONFIG_FILES = ["triage.yaml", "triage.local.yaml"];

@@ -439,7 +439,9 @@ export function changes(before: Followups, after: Followups): string[] {
         ? [`closed ${id} (${l.closed.reason}): ${l.ask}`]
         : l.reminded.length > before[id]!.reminded.length
           ? [`reminded ${id}: ${l.ask}`]
-          : [],
+          : l.snoozed && l.snoozed !== before[id]!.snoozed
+            ? [`snoozed ${id} until ${l.snoozed}: ${l.ask}`]
+            : [],
   );
 }
 
@@ -450,6 +452,23 @@ export const settle = (loop: Loop, now: number, until?: number): Loop =>
   until === undefined
     ? { ...loop, closed: { at: new Date(now).toISOString(), reason: "dismissed" } }
     : { ...loop, snoozed: new Date(until).toISOString() };
+
+/** Settles the open loops anchored on any of `keys`, returning the ledger and their asks. */
+export function settleKeys(
+  ledger: Followups,
+  keys: Set<string>,
+  now: number,
+  until?: number,
+): { ledger: Followups; asks: string[] } {
+  const next = { ...ledger };
+  const asks: string[] = [];
+  for (const [id, l] of Object.entries(next))
+    if (!l.closed && l.anchors.some((a) => keys.has(a.key))) {
+      next[id] = settle(l, now, until);
+      asks.push(l.ask);
+    }
+  return { ledger: next, asks };
+}
 
 function cli(args: string[]): number {
   const path = ledgerPath(resolve(import.meta.dir, ".."));

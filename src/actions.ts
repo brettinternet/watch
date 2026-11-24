@@ -6,10 +6,12 @@ import { readChannels } from "./sources/slack";
 
 export type Item = { priority: Priority; category: string; reason: string; signals: Signal[] };
 
-export function matches(action: Action, item: Item): boolean {
-  const { categories, sources, min_priority } = action.when;
+export function matches(action: Action, item: Item, now: number): boolean {
+  const { categories, sources, min_priority, max_priority, after } = action.when;
   return (
     rank(item.priority) >= rank(min_priority) &&
+    (!max_priority || rank(item.priority) <= rank(max_priority)) &&
+    (after === undefined || new Date(now).getHours() >= after) &&
     (!categories || categories.includes(item.category)) &&
     (!sources || item.signals.some((s) => sources.includes(sourceId(s))))
   );
@@ -72,21 +74,26 @@ export type Replies = Record<string, { at: number; targets: ReplyTarget[]; keys:
 const REPLIES_TTL_MS = 7 * 864e5;
 
 /**
+ * Channel name → id from a workspace's triage cache; slack-mcp-server reports an uncached
+ * channel by its id. Undefined when neither.
+ */
+export function channelIds(stateDir: string, source: string): (name: string) => string | undefined {
+  const ids = new Map(readChannels(join(stateDir, "slack", source)).map((c) => [c.name, c.id]));
+  return (name) => ids.get(name) ?? (/^[CDG][A-Z0-9]+$/.test(name) ? name : undefined);
+}
+
+/**
  * Records what `task slack:reply` lets the item's agent touch: its Slack messages, leaving out
  * one whose channel id isn't in the triage cache, and its signals' follow-ups.
  */
 export function recordReplies(stateDir: string, item: Item, now: number): void {
-  const names = new Map<string, Map<string, string>>();
+  const lookups = new Map<string, (name: string) => string | undefined>();
   const targets: ReplyTarget[] = [];
   for (const s of item.signals) {
     if (s.kind !== "slack") continue;
-    let ids = names.get(s.source);
-    if (!ids) {
-      ids = new Map(readChannels(join(stateDir, "slack", s.source)).map((c) => [c.name, c.id]));
-      names.set(s.source, ids);
-    }
-    // The server reports an uncached channel by its id.
-    const channel = ids.get(s.channel) ?? (/^[CDG][A-Z0-9]+$/.test(s.channel) ? s.channel : "");
+    let id = lookups.get(s.source);
+    if (!id) lookups.set(s.source, (id = channelIds(stateDir, s.source)));
+    const channel = id(s.channel);
     if (channel)
       targets.push({
         message: s.key,
@@ -131,7 +138,7 @@ export async function runAction(
   item: Item,
 ): Promise<string | undefined> {
   recordReplies(join(root, ".state"), item, Date.now());
-  const argv = typeof action.run === "string" ? ["/bin/sh", "-c", action.run] : action.run;
+  const argv = typeof action.run === "string" ? ["/bin/sh", "-c", action.run] : action.run!;
   const proc = Bun.spawn(argv, {
     cwd: root,
     env: actionEnv(process.env, name, item),

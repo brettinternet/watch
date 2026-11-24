@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { matches, runAction } from "./actions";
+import { runBuiltins } from "./builtins";
 import {
   type Config,
   due,
@@ -301,15 +302,17 @@ async function main(dryRun: boolean): Promise<number> {
     .filter((i) => !afterHours || rank(i.priority) >= rank(afterHours))
     .flatMap((item) =>
       Object.entries(cfg.actions)
-        .filter(([, action]) => matches(action, item))
+        .filter(([, action]) => matches(action, item, now))
         .map(([name, action]) => ({ name, action, item })),
     );
   const actioned = [...new Set(runs.map((r) => r.name))];
 
   // Reminders ride along on a notification that goes out anyway; alone they go out quietly
-  // unless one was high. An action notifies unless quiet, so a loud one never runs unannounced.
+  // unless one was high. A command action notifies unless quiet, so a loud one never runs
+  // unannounced; built-in actions never do.
   let notified = false;
-  const loud = runs.some((r) => !r.action.quiet);
+  const commands = runs.filter((r) => r.action.run);
+  const loud = commands.some((r) => !r.action.quiet);
   const carrier = !!triaged && (rank(priority) >= rank(minPriority) || loud);
   if (carrier || still.length) {
     const block = `Still open:\n${still.map((l) => `• ${l}`).join("\n")}`;
@@ -371,9 +374,15 @@ async function main(dryRun: boolean): Promise<number> {
         first: cfg.followups.first,
         signals: all,
       });
-    // Saved before actions run, so their agents can dismiss or snooze the loops just opened.
-    if (!dryRun && runs.length) saveFollowups(ledgerFile, ledger);
-    for (const { name, action, item } of runs) {
+    const built = await runBuiltins(
+      runs.filter((r) => r.action.do),
+      { stateDir, cfg, all, items, ledger, now, dryRun, env: process.env },
+    );
+    ledger = built.ledger;
+    failures.push(...built.failures);
+    // Saved before commands run, so their agents can dismiss or snooze the loops just opened.
+    if (!dryRun && commands.length) saveFollowups(ledgerFile, ledger);
+    for (const { name, action, item } of commands) {
       if (dryRun) console.log(`would run action ${name} for: ${item.reason}`);
       else {
         const err = await runAction(root, name, action, item);

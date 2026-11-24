@@ -12,10 +12,16 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { type Replies, type ReplyTarget, replyTarget } from "./actions";
 import { Duration, loadConfig } from "./config";
-import { parseCsv } from "./csv";
-import { type Followups, ledgerPath, settle } from "./followups";
+import { type Followups, ledgerPath, settleKeys } from "./followups";
 import { readState, writeState } from "./signal";
-import { agentCacheDir, callText, connectServer, serverEnv, webApi } from "./sources/slack";
+import {
+  agentCacheDir,
+  callText,
+  connectServer,
+  lastRead,
+  serverEnv,
+  webApi,
+} from "./sources/slack";
 
 const primary = process.argv[2]!;
 const stateDir = join(primary, ".state");
@@ -93,18 +99,9 @@ async function markRead(t: ReplyTarget): Promise<string> {
     });
     return "Marked the thread read.";
   }
-  const { channel_types, mentions_only, max_channels } =
-    loadConfig(primary).sources.slack[t.source] ?? {};
-  const text = await callText(await client(t.source), "conversations_unreads", {
-    include_messages: false,
-    ...(channel_types ? { channel_types, mentions_only, max_channels } : {}),
-  });
-  // xoxp tokens prepend a note to the CSV.
-  const row = parseCsv(text.slice(Math.max(0, text.indexOf("ChannelID")))).find(
-    (r) => r.ChannelID === t.channel,
-  );
-  // Fixed-width "seconds.micros" timestamps compare as strings.
-  if (!row || (row.LastRead ?? "") >= t.ts) return "Already read; left as is.";
+  const read = await lastRead(await client(t.source), loadConfig(primary).sources.slack[t.source]);
+  const last = read.get(t.channel);
+  if (last === undefined || last >= t.ts) return "Already read; left as is.";
   return mcp(t, "conversations_mark", { ts: t.ts });
 }
 
@@ -121,15 +118,11 @@ async function save(t: ReplyTarget, remindIn?: string): Promise<string> {
 /** Dismisses, or snoozes until `until`, the open follow-ups on the item's signals. */
 function settleFollowups(until?: number): string {
   const path = ledgerPath(primary);
-  const ledger = readState<Followups>(path);
-  const ids = Object.keys(ledger).filter(
-    (id) => !ledger[id]!.closed && ledger[id]!.anchors.some((a) => keys.has(a.key)),
-  );
-  if (!ids.length) return "No open follow-up for this item.";
-  for (const id of ids) ledger[id] = settle(ledger[id]!, Date.now(), until);
+  const { ledger, asks } = settleKeys(readState<Followups>(path), keys, Date.now(), until);
+  if (!asks.length) return "No open follow-up for this item.";
   writeState(path, ledger);
   const done = until === undefined ? "Dismissed" : `Snoozed until ${new Date(until).toISOString()}`;
-  return `${done}: ${ids.map((id) => ledger[id]!.ask).join("; ")}`;
+  return `${done}: ${asks.join("; ")}`;
 }
 
 const message = z
