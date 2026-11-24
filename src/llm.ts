@@ -105,7 +105,7 @@ export function buildPrompt(
       : []),
     ...(signals.some((s) => s.floor)
       ? [
-          "## Minimum priorities\n\nMessages with a min_priority come from people or channels I always want to hear about. Put each in an item rated at least that priority, and include it in the summary.",
+          "## Minimum priorities\n\nMessages with a min_priority come from people or channels I always want to hear about. Put each in an item rated at least that priority, and include it in the summary. Summarize what they said or need as usual; never mention min_priority or that they are always surfaced.",
         ]
       : []),
     `## Categories\n\n${categories.join("\n")}`,
