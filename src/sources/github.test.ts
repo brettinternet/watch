@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { type OpenPr, prsToSignals, readyPrsToSignals } from "./github";
+import {
+  type OpenPr,
+  prsToSignals,
+  readyPrsToSignals,
+  type ReviewPr,
+  reviewPrsToSignals,
+} from "./github";
 
 test("a merged PR keeps a stable key and an exact merge timestamp", () => {
   const [s] = prsToSignals("work", "acme/api", [
@@ -56,5 +62,29 @@ test("a ready PR keys on its latest approval or check, ignoring comments and unr
   ]);
   expect(signals.map((s) => [s.stream, s.time])).toEqual([
     ["acme/api#1:ready", "2026-11-19T11:00:00.000Z"],
+  ]);
+});
+
+test("a review request keys on the latest request of me, however old the PR", () => {
+  const event = (login: string, createdAt: string) => ({ createdAt, requestedReviewer: { login } });
+  const pr = (events: ReturnType<typeof event>[], isDraft = false): ReviewPr => ({
+    number: 9,
+    title: "Add cache",
+    url: "https://github.com/acme/api/pull/9",
+    createdAt: "2026-11-01T09:00:00Z",
+    isDraft,
+    author: { login: "pat" },
+    timelineItems: { nodes: events },
+  });
+  const signals = reviewPrsToSignals("work", "acme/api", "me", [
+    pr([
+      event("me", "2026-11-18T09:00:00Z"),
+      event("me", "2026-11-23T15:00:00Z"),
+      event("sam", "2026-11-23T16:00:00Z"),
+    ]),
+    pr([event("me", "2026-11-23T15:00:00Z")], true),
+  ]);
+  expect(signals.map((s) => [s.stream, s.time])).toEqual([
+    ["acme/api#9:review", "2026-11-23T15:00:00.000Z"],
   ]);
 });

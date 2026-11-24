@@ -9,7 +9,7 @@ sources:
     # side: { channel_types: dm, mentions_only: true }
     # acme: { url: https://acme.slack.com, priority_channels: { incidents: high } }
   # github:
-  #   acme: { repos: [owner/repo] }
+  #   acme: { repos: [owner/repo], events: [merged, ready, review] }
   # linear:
   #   acme: {} # LINEAR_ACME_API_KEY
   # jira:

@@ -11,8 +11,20 @@ import {
   sourceEntries,
   sourceIds,
 } from "./config";
+import {
+  changes,
+  due as dueFollowups,
+  type Evidence,
+  type Followups,
+  ledgerPath,
+  remind,
+  save as saveFollowups,
+  stillOpen,
+  track,
+  update as updateFollowups,
+} from "./followups";
 import { floorOf, raised, toItems } from "./items";
-import { type Context, triage, type Triage } from "./llm";
+import { clip, type Context, joinSummary, triage, type Triage } from "./llm";
 import { notify, tellArgv } from "./notify";
 import {
   advance,
@@ -175,6 +187,7 @@ async function main(dryRun: boolean): Promise<number> {
   // One slack-mcp-server per source for the whole run: a single Slack session covers both
   // collection and the context pass, instead of re-authenticating between them.
   const servers = new Map<string, SlackServer>();
+  let all: Signal[] = [];
   let fresh: Signal[] = [];
   let result: Triage | undefined;
   let collectFailed = false;
@@ -252,8 +265,9 @@ async function main(dryRun: boolean): Promise<number> {
       }),
     );
     collectFailed = failures.length > 0;
+    all = collected.flat();
     // Each channel's messages stay together in time order, so triage reads them as conversations.
-    fresh = unseen(collected.flat(), cursors, minTs, windows)
+    fresh = unseen(all, cursors, minTs, windows)
       .sort(
         (a, b) =>
           sourceId(a).localeCompare(sourceId(b)) ||
@@ -264,7 +278,7 @@ async function main(dryRun: boolean): Promise<number> {
         const floor = floorOf(cfg, s);
         return floor ? { ...s, floor } : s;
       });
-    console.log(`${collected.flat().length} unread, ${fresh.length} new`);
+    console.log(`${all.length} unread, ${fresh.length} new`);
 
     if (fresh.length > 0) {
       try {
@@ -288,34 +302,81 @@ async function main(dryRun: boolean): Promise<number> {
     return 1;
   }
 
-  let notified = false;
-  if (result) {
-    const { title, summary, items } = toItems(result, fresh);
-    const priority = items.reduce<Priority>(
-      (p, i) => (rank(i.priority) > rank(p) ? i.priority : p),
-      "none",
-    );
-    console.log(`\n[${priority}] ${title}\n${summary}\n`);
+  // Follow-ups close on what this run collected. After hours, held items come back in the
+  // work-hours summary, which opens and reminds them.
+  const evidence: Evidence = {
+    ran,
+    signals: all,
+    now,
+    slack: new Map(
+      [...servers].map(([name, server]) => {
+        const { max_channels, max_messages_per_channel } = cfg.sources.slack[name]!;
+        const caps = { maxChannels: max_channels, maxMessages: max_messages_per_channel };
+        return [name, { mine: server.me.mine, ...caps }];
+      }),
+    ),
+  };
+  const ledgerFile = ledgerPath(root);
+  const ledgerBefore = readState<Followups>(ledgerFile);
+  let ledger: Followups = updateFollowups(ledgerBefore, evidence);
+  const reminders = afterHours ? [] : dueFollowups(ledger, evidence, fresh);
+  const still = stillOpen(
+    reminders.map(([, l]) => l),
+    now,
+  );
+
+  const triaged = result ? toItems(result, fresh) : undefined;
+  const items = triaged?.items ?? [];
+  const priority = items.reduce<Priority>(
+    (p, i) => (rank(i.priority) > rank(p) ? i.priority : p),
+    "none",
+  );
+  if (triaged) {
+    console.log(`\n[${priority}] ${triaged.title}\n${triaged.summary}\n`);
     for (const i of items)
       console.log(`- ${i.priority} ${i.category} (${i.signals.length}): ${i.reason}`);
+  }
+  if (still.length) console.log(`\nstill open:\n${still.map((l) => `- ${l}`).join("\n")}`);
 
-    if (rank(priority) >= rank(minPriority)) {
-      // Link the newest linkable message of the first top-priority item.
-      const url = items.find((i) => i.priority === priority)?.signals.findLast((s) => s.url)?.url;
-      const argv = tellArgv(root, cfg.notify, priority, title, summary, url);
-      if (dryRun) console.log(`\nwould run: ${argv.slice(0, -1).join(" ")} <summary>`);
-      else {
-        const { delivered, detail } = await notify(argv);
-        console.log(`\ntell: ${detail}`);
-        if (!delivered) {
-          for (const f of failures) console.error(f);
-          console.error("notification not delivered; signals stay unhandled for the next run");
-          return 1;
-        }
-        notified = true;
+  // Reminders ride along on a notification that goes out anyway; alone they go out quietly
+  // unless one was high.
+  let notified = false;
+  const carrier = !!triaged && rank(priority) >= rank(minPriority);
+  if (carrier || still.length) {
+    const block = `Still open:\n${still.map((l) => `• ${l}`).join("\n")}`;
+    const top = reminders[0]?.[1].priority ?? "low";
+    const [p, title, body, url] = carrier
+      ? [
+          priority,
+          triaged.title,
+          still.length ? clip(`${triaged.summary}\n${block}`, 1024) : triaged.summary,
+          // Link the newest linkable message of the first top-priority item.
+          items.find((i) => i.priority === priority)?.signals.findLast((s) => s.url)?.url,
+        ]
+      : [
+          rank(top) >= rank("high") ? ("high" as const) : ("low" as const),
+          clip(`Still open: ${still[0]}`, 100),
+          joinSummary(still),
+          reminders.find(([, l]) => l.url)?.[1].url,
+        ];
+    const argv = tellArgv(root, cfg.notify, p, title, body, url);
+    if (dryRun) console.log(`\nwould run: ${argv.slice(0, -1).join(" ")} <summary>`);
+    else {
+      const { delivered, detail } = await notify(argv);
+      console.log(`\ntell: ${detail}`);
+      if (!delivered) {
+        for (const f of failures) console.error(f);
+        console.error("notification not delivered; signals stay unhandled for the next run");
+        return 1;
       }
+      notified = true;
+      // A reminder clipped out of the message wasn't delivered, so it stays due.
+      const shown = reminders.filter((_, i) => body.includes(still[i]!)).map(([id]) => id);
+      ledger = remind(ledger, shown, now, cfg.work_hours);
     }
+  }
 
+  if (triaged) {
     for (const item of items) {
       if (afterHours && rank(item.priority) < rank(afterHours)) continue; // held for work hours
       for (const [name, action] of Object.entries(cfg.actions)) {
@@ -328,7 +389,16 @@ async function main(dryRun: boolean): Promise<number> {
       }
     }
     if (!dryRun) writeState(cursorsPath, prune(advance(cursors, fresh), minTs, windows));
+    if (!afterHours)
+      ledger = track(ledger, items, fresh, {
+        notified: carrier,
+        minPriority,
+        now,
+        work: cfg.work_hours,
+      });
   }
+  for (const c of changes(ledgerBefore, ledger)) console.log(`follow-up ${c}`);
+  if (!dryRun) saveFollowups(ledgerFile, ledger);
   if (!dryRun && scheduled.length) {
     const next: Collected = {};
     for (const [id] of scheduled) {

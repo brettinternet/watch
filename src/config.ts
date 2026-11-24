@@ -8,7 +8,7 @@ export type Priority = z.infer<typeof Priority>;
 export const rank = (p: Priority) => PRIORITIES.indexOf(p);
 
 const UNITS = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 } as const;
-const Duration = z
+export const Duration = z
   .string()
   .regex(/^\d+[smhd]$/, "use a duration like 30s, 3m, 24h, or 2d")
   .transform((s) => Number(s.slice(0, -1)) * UNITS[s.at(-1) as keyof typeof UNITS]);
@@ -71,7 +71,7 @@ const GithubSource = z
     repos: z.array(z.string().regex(/^[^/\s]+\/[^/\s]+$/, "use owner/repo")).min(1),
     author: z.string().min(1).default("@me"),
     events: z
-      .array(z.enum(["merged", "ready"]))
+      .array(z.enum(["merged", "ready", "review"]))
       .min(1)
       .default(["merged"]),
     ...Common,
@@ -247,6 +247,16 @@ export function inWorkHours(work: Config["work_hours"], at: Date): boolean {
   if (!work) return true;
   const hour = at.getHours();
   return work.days.includes(DAYS[at.getDay()]!) && hour >= work.start && hour < work.end;
+}
+
+const STEP_MS = 5 * 60_000;
+
+/** The time `ms` of work hours after `from`; the clock stops outside them. */
+export function afterWork(work: Config["work_hours"], from: number, ms: number): number {
+  if (!work) return from + ms;
+  let at = from;
+  for (let left = ms; left > 0; at += STEP_MS) if (inWorkHours(work, new Date(at))) left -= STEP_MS;
+  return at;
 }
 
 export const CONFIG_FILES = ["triage.yaml", "triage.local.yaml"];

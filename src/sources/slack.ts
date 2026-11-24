@@ -66,7 +66,14 @@ type Me = {
   threads: Set<string>;
   /** Channel → timestamps of my recent top-level messages there. */
   posts: Map<string, string[]>;
+  /** My recent messages; a reply here resolves a follow-up. */
+  mine: Mine[];
 };
+
+export type Mine = { channel: string; ts: string; thread?: string };
+
+/** Stream of thread replies found by search, which carry no unread state. */
+export const THREAD_STREAM = "thread-mentions";
 
 /** Starts this workspace's server, which only exposes read tools. Caller must `close()` it. */
 export async function openServer(name: string, ctx: CollectCtx): Promise<SlackServer> {
@@ -135,15 +142,18 @@ async function whoAmI(call: Call, since: string, channels: Channel[]): Promise<M
   const channel = channelNamer(channels);
   const threads = new Set<string>();
   const posts = new Map<string, string[]>();
+  const mine: Mine[] = [];
   for (const r of recent) {
     if (!r.MsgID) continue;
     const name = channel(r.Channel ?? "");
+    const thread = r.ThreadTs && r.ThreadTs !== r.MsgID ? r.ThreadTs : undefined;
+    mine.push({ channel: name, ts: r.MsgID, ...(thread ? { thread } : {}) });
     // Search rows carry a thread only for replies; any top-level message may start one.
     threads.add(`${name}:${r.ThreadTs || r.MsgID}`);
     if (!r.ThreadTs || r.ThreadTs === r.MsgID)
       posts.set(name, [...(posts.get(name) ?? []), r.MsgID]);
   }
-  return { id, groups: new Set(groups.flatMap((g) => g.id || [])), threads, posts };
+  return { id, groups: new Set(groups.flatMap((g) => g.id || [])), threads, posts, mine };
 }
 
 /**
@@ -224,7 +234,7 @@ async function threadReplies(
   const inMine = toSignals(name, server, replies(mine), excluded).flatMap((s) =>
     seen.has(s.key) ? [] : [{ ...s, to: s.to === "dm" || s.to === "me" ? s.to : "my_thread" }],
   );
-  return [...mentioned, ...inMine].map((s) => ({ ...s, stream: "thread-mentions" }));
+  return [...mentioned, ...inMine].map((s) => ({ ...s, stream: THREAD_STREAM }));
 }
 
 /** Each signal's thread plus the channel's recent messages, so triage can understand it. */
@@ -262,13 +272,14 @@ export function readChannels(cacheDir: string): Channel[] {
 
 /** User id → profile display name (or real name) and email, from the server's users cache.
  * Message rows only carry the handle and real name, and handles are often opaque. */
-type Users = Map<string, { name?: string; email?: string }>;
+type Users = Map<string, { name?: string; email?: string; bot?: boolean }>;
 
 export function readUsers(cacheDir: string): Users {
   const path = join(cacheDir, "users_cache.json");
   if (!existsSync(path)) return new Map();
   const users = JSON.parse(readFileSync(path, "utf8")) as {
     id: string;
+    is_bot?: boolean;
     profile?: { display_name?: string; real_name?: string; email?: string };
   }[];
   return new Map(
@@ -277,6 +288,7 @@ export function readUsers(cacheDir: string): Users {
       {
         name: u.profile?.display_name || u.profile?.real_name || undefined,
         email: u.profile?.email?.toLowerCase(),
+        bot: u.is_bot || u.id === "USLACKBOT",
       },
     ]),
   );
@@ -336,6 +348,7 @@ export function toSignals(
         ...(thread ? { thread } : {}),
         ...(url ? { url } : {}),
         ...(to ? { to } : {}),
+        ...(r.BotName || user?.bot ? { bot: true as const } : {}),
       };
     });
 }

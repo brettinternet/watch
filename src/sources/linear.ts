@@ -65,14 +65,23 @@ export async function linearQuery<T>(key: string, query: string, variables = {})
   return body.data;
 }
 
-/** Unread Linear inbox notifications from people since `ctx.since`. */
+/** How far back the inbox is read, so follow-ups can still see an old ask leave it. */
+export const LINEAR_LOOKBACK_MS = 14 * 86_400_000;
+
+/**
+ * Unread Linear inbox notifications from people, back to `ctx.since` or LINEAR_LOOKBACK_MS,
+ * whichever is earlier; cursors keep the older ones from triaging again.
+ */
 export async function collectLinear(name: string, ctx: CollectCtx): Promise<Signal[]> {
   const key = linearKey(name, ctx.env);
+  const since = new Date(
+    Math.min(Date.parse(ctx.since), Date.now() - LINEAR_LOOKBACK_MS),
+  ).toISOString();
   const nodes: Notification[] = [];
   let after: string | null = null;
   do {
     const page: Page = await linearQuery(key, QUERY, {
-      since: ctx.since,
+      since,
       after,
     });
     nodes.push(...page.notifications.nodes);

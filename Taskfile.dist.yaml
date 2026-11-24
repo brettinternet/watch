@@ -28,6 +28,10 @@ tasks:
     desc: Notify today's meetings once; `task agenda -- --dry-run` previews without notifying
     cmd: ./scripts/agenda {{.CLI_ARGS}}
 
+  followups:
+    desc: List open follow-ups; `-- done <id>` dismisses one, `-- snooze <id> 1d` defers it
+    cmd: mise exec bun -- bun src/followups.ts {{.CLI_ARGS}}
+
   doctor:
     desc: Check setup, credentials, and scheduler state without side effects
     cmd: "{{.ENV_RUN}} -- bun src/doctor.ts"

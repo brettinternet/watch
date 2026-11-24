@@ -20,7 +20,37 @@ export type OpenPr = {
   statusCheckRollup: { completedAt?: string; startedAt?: string }[];
 };
 
-/** Merged and/or ready-to-merge PRs matching `author` across the configured repos, via `gh`. */
+export type ReviewPr = {
+  number: number;
+  title: string;
+  url: string;
+  createdAt: string;
+  isDraft: boolean;
+  author: { login?: string } | null;
+  timelineItems: {
+    nodes: { createdAt: string; requestedReviewer: { login?: string } | null }[];
+  };
+};
+
+const REVIEWS = `query ($q: String!) {
+  viewer { login }
+  search(query: $q, type: ISSUE, first: 50) {
+    nodes {
+      ... on PullRequest {
+        number title url createdAt isDraft
+        author { login }
+        timelineItems(last: 100, itemTypes: [REVIEW_REQUESTED_EVENT]) {
+          nodes { ... on ReviewRequestedEvent { createdAt requestedReviewer { ... on User { login } } } }
+        }
+      }
+    }
+  }
+}`;
+
+/**
+ * Merged and/or ready-to-merge PRs matching `author`, and open PRs requesting my review, across
+ * the configured repos, via `gh`.
+ */
 export async function collectGithub(
   name: string,
   source: GithubSource,
@@ -43,6 +73,14 @@ export async function collectGithub(
         ctx.env,
       ); // prettier-ignore
       signals.push(...readyPrsToSignals(name, repo, JSON.parse(out) as OpenPr[]));
+    }
+    if (source.events.includes("review")) {
+      const q = `repo:${repo} is:pr is:open user-review-requested:@me`;
+      const out = await gh(["api", "graphql", "-f", `query=${REVIEWS}`, "-f", `q=${q}`], ctx.env);
+      const { viewer, search } = (
+        JSON.parse(out) as { data: { viewer: { login: string }; search: { nodes: ReviewPr[] } } }
+      ).data;
+      signals.push(...reviewPrsToSignals(name, repo, viewer.login, search.nodes));
     }
   }
   return signals;
@@ -102,6 +140,38 @@ export function readyPrsToSignals(name: string, repo: string, prs: OpenPr[]): Si
         time: new Date(ms).toISOString(),
         author: p.author?.login ?? "unknown",
         text: `Ready to merge: ${p.title} — ${p.url}`,
+        url: p.url,
+      };
+    });
+}
+
+/**
+ * Open PRs that request my review directly; team requests are left out. `ts` is the latest
+ * request of me, so a PR opened long ago, or re-requested after my review, still arrives as new.
+ * Each PR is its own cursor stream, which follow-ups also use to see when the request is gone.
+ */
+export function reviewPrsToSignals(
+  name: string,
+  repo: string,
+  me: string,
+  prs: ReviewPr[],
+): Signal[] {
+  return prs
+    .filter((p) => !p.isDraft)
+    .map((p) => {
+      const requests = p.timelineItems.nodes.filter((e) => e.requestedReviewer?.login === me);
+      // A request older than the last 100 timeline events falls back to the PR's creation.
+      const ms = Date.parse(requests.at(-1)?.createdAt ?? p.createdAt);
+      return {
+        key: `${name}:${repo}:#${p.number}:review:${ms}`,
+        source: name,
+        kind: "github",
+        channel: repo,
+        stream: `${repo}#${p.number}:review`,
+        ts: (ms / 1000).toFixed(3),
+        time: new Date(ms).toISOString(),
+        author: p.author?.login ?? "unknown",
+        text: `Review requested: ${p.title} — ${p.url}`,
         url: p.url,
       };
     });

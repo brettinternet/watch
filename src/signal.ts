@@ -21,6 +21,8 @@ export type Signal = {
   url?: string;
   /** Who a message is for, when the source can tell, e.g. Slack's "dm", "me", or "others". */
   to?: string;
+  /** Posted by an app or bot, when the source can tell. */
+  bot?: true;
   /** Minimum priority from `vips` or `priority_channels`, set after collection. */
   floor?: Priority;
 };

@@ -16,6 +16,7 @@ const ws = {
     groups: new Set(["S1"]),
     threads: new Set(["#ops:1700000000.000100"]),
     posts: new Map([["#ops", ["1700000000.000100"]]]),
+    mine: [],
   },
 };
 
