@@ -1,5 +1,7 @@
 # watch
 
+Watch noisy stuff and only get summaries about the important things.
+
 A [Noon](https://github.com/brettinternet/noon) job collects signals from each configured source — unread Slack messages through [slack-mcp-server](https://github.com/korotovsky/slack-mcp-server), recently merged or ready-to-merge GitHub PRs through `gh`, Linear and Jira asks from teammates, severe weather and traffic near you, and top news — then Claude or Pi groups and prioritizes them, [Tell](https://github.com/brettinternet/tell) sends one Pushover notification at the matching priority, and optional actions run for matching items, such as starting an agent to investigate an incident.
 
 ```mermaid
