@@ -23,13 +23,12 @@ import {
   track,
   update as updateFollowups,
 } from "./followups";
-import { floorOf, raised, toItems } from "./items";
-import { clip, type Context, joinSummary, triage, type Triage } from "./llm";
+import { floorOf, toItems } from "./items";
+import { clip, joinSummary, triage, type Triage } from "./llm";
 import { notify, tellArgv } from "./notify";
 import {
   advance,
   type CollectCtx,
-  compareTs,
   type Cursors,
   latest,
   prune,
@@ -49,12 +48,12 @@ import { collectHackernews } from "./sources/hackernews";
 import { collectJira } from "./sources/jira";
 import { collectKev } from "./sources/kev";
 import { collectLinear } from "./sources/linear";
-import { collectSlack, openServer, type SlackServer, slackContext } from "./sources/slack";
+import { collectSlack, openServer, type SlackServer } from "./sources/slack";
 import { collectTraffic } from "./sources/traffic";
 import { collectWeather } from "./sources/weather";
+import { verify } from "./verify";
 
 const NOOP = 78; // noon.yaml noop_exit_code: nothing new or nothing worth notifying
-const CONTEXT_ITEMS = 3; // most flagged items per run that get Slack context and a second pass
 
 /** kind/name source → ISO time of its last handled collection. */
 type Collected = Record<string, string>;
@@ -66,59 +65,6 @@ const later = (a: Collected, b: Collected): Collected => {
 };
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
-/**
- * Fetches Slack context for the most important items the LLM flagged at or above the notify
- * threshold and triages once more with it; otherwise returns `first`.
- */
-async function withContext(
-  root: string,
-  cfg: Config,
-  servers: Map<string, SlackServer>,
-  fresh: Signal[],
-  first: Triage,
-  afterHours?: Priority,
-): Promise<Triage> {
-  const minPriority = afterHours ?? cfg.notify.min_priority;
-  const wanted = first.items
-    .map((i) => ({
-      ...i,
-      priority: raised(
-        i.priority,
-        i.ids.flatMap((id) => fresh[Number(id.slice(1)) - 1] ?? []),
-      ),
-    }))
-    .filter((i) => i.needs_context && rank(i.priority) >= rank(minPriority))
-    .sort((a, b) => rank(b.priority) - rank(a.priority))
-    .slice(0, CONTEXT_ITEMS)
-    .flatMap((i) => {
-      const id = i.ids.findLast((id) => fresh[Number(id.slice(1)) - 1]?.kind === "slack");
-      return id ? [{ id, signal: fresh[Number(id.slice(1)) - 1]! }] : [];
-    });
-  if (wanted.length === 0) return first;
-
-  const seen = new Set(fresh.map((s) => s.key));
-  const context: Context = [];
-  for (const source of new Set(wanted.map((w) => w.signal.source))) {
-    const server = servers.get(source);
-    if (!server) continue; // its session failed to open during collection
-    const mine = wanted.filter((w) => w.signal.source === source);
-    const fetched = await slackContext(
-      source,
-      server,
-      mine.map((w) => w.signal),
-    );
-    mine.forEach((w, n) => {
-      for (const s of fetched[n]!.sort((a, b) => compareTs(a.ts, b.ts))) {
-        if (seen.has(s.key)) continue;
-        seen.add(s.key);
-        context.push({ for: w.id, signal: s });
-      }
-    });
-  }
-  console.log(`context: ${context.length} messages for ${wanted.map((w) => w.id).join(", ")}`);
-  return context.length ? triage(root, cfg, fresh, context, afterHours) : first;
-}
 
 async function main(dryRun: boolean): Promise<number> {
   const root = resolve(import.meta.dir, "..");
@@ -284,7 +230,7 @@ async function main(dryRun: boolean): Promise<number> {
       try {
         result = await triage(root, cfg, fresh, [], afterHours);
         try {
-          result = await withContext(root, cfg, servers, fresh, result, afterHours);
+          result = await verify(root, cfg, servers, fresh, result, afterHours);
         } catch (e) {
           failures.push(`context: ${message(e)}`); // the first pass still stands
         }

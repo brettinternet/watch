@@ -176,3 +176,74 @@ export function reviewPrsToSignals(
       };
     });
 }
+
+export type PrState = {
+  number: number;
+  title: string;
+  url: string;
+  state: "OPEN" | "MERGED" | "CLOSED";
+  isDraft: boolean;
+  author: { login?: string } | null;
+  updatedAt: string;
+  reviewDecision: string;
+  reviewRequests: { login?: string; slug?: string }[];
+  latestReviews: { author: { login?: string } | null; state: string }[];
+  statusCheckRollup: { conclusion?: string; status?: string; state?: string }[];
+};
+
+/** A PR's current state as one line for triage context, looked up on the LLM's request. */
+export async function prState(
+  name: string,
+  repo: string,
+  n: number,
+  env: CollectCtx["env"],
+): Promise<Signal> {
+  const fields =
+    "number,title,url,state,isDraft,author,updatedAt,reviewDecision,reviewRequests,latestReviews,statusCheckRollup";
+  const out = await gh(["pr", "view", String(n), "--repo", repo, "--json", fields], env);
+  return prStateToSignal(name, repo, JSON.parse(out) as PrState);
+}
+
+const FAILED = new Set(["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "ERROR"]);
+
+export function prStateToSignal(name: string, repo: string, p: PrState): Signal {
+  const by = (state: string) =>
+    p.latestReviews.filter((r) => r.state === state).map((r) => `@${r.author?.login ?? "?"}`);
+  const checks = p.statusCheckRollup;
+  const status = [
+    p.state.toLowerCase() + (p.isDraft ? " draft" : ""),
+    ...(p.state === "OPEN" && p.reviewDecision
+      ? [p.reviewDecision.toLowerCase().replace("_", " ")]
+      : []),
+    ...(p.reviewRequests.length
+      ? [
+          `review requested from ${p.reviewRequests.map((r) => (r.login ? `@${r.login}` : r.slug)).join(", ")}`,
+        ]
+      : []),
+    ...(by("APPROVED").length ? [`approved by ${by("APPROVED").join(", ")}`] : []),
+    ...(by("CHANGES_REQUESTED").length
+      ? [`changes requested by ${by("CHANGES_REQUESTED").join(", ")}`]
+      : []),
+    ...(checks.length
+      ? [
+          checks.some((c) => FAILED.has(c.conclusion ?? c.state ?? ""))
+            ? "checks failing"
+            : checks.some((c) => (c.status && c.status !== "COMPLETED") || c.state === "PENDING")
+              ? "checks running"
+              : "checks passing",
+        ]
+      : []),
+  ];
+  const ms = Date.parse(p.updatedAt);
+  return {
+    key: `${name}:${repo}:#${p.number}:state`,
+    source: name,
+    kind: "github",
+    channel: repo,
+    ts: (ms / 1000).toFixed(3),
+    time: p.updatedAt,
+    author: p.author?.login ?? "unknown",
+    text: `PR #${p.number} "${p.title}": ${status.join(" · ")} — ${p.url}`,
+    url: p.url,
+  };
+}

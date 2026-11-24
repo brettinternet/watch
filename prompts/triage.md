@@ -58,7 +58,7 @@ Group messages about the same topic or thread into one item. Every message id be
 
 ## Context
 
-Set needs_context on an item only when it is likely normal priority or higher and you cannot tell what is asked, how urgent it is, or the next step without its thread or earlier channel messages, e.g. a bare "can you look at this?" or a reply that points at missing context. Leave it unset when the messages are clear.
+Set verify on an item only when it is likely normal priority or higher and a look-up would change its priority or next step. Ask for "thread" when you cannot tell what is asked, how urgent it is, or the next step without its Slack thread or earlier channel messages, e.g. a bare "can you look at this?". Ask for a PR as "owner/repo#N" or a Linear issue as "ABC-123" when a message asks about one and its current state matters, e.g. a review someone else may have done or a PR that may have merged. Name only PRs and issues the messages refer to, at most three per item. Leave verify unset when the messages are clear.
 
 ## Summary
 

@@ -123,3 +123,39 @@ export function notificationsToSignals(name: string, nodes: Notification[], now:
     ];
   });
 }
+
+type Issue = {
+  identifier: string;
+  title: string;
+  url: string;
+  updatedAt: string;
+  priorityLabel: string;
+  state: { name: string };
+  assignee: { name: string } | null;
+  creator: { name: string } | null;
+};
+
+/** A Linear issue's current state as one line for triage context, looked up on the LLM's request. */
+export async function issueState(
+  name: string,
+  id: string,
+  env: CollectCtx["env"],
+): Promise<Signal> {
+  const { issue } = await linearQuery<{ issue: Issue }>(
+    linearKey(name, env),
+    `query ($id: String!) { issue(id: $id) { identifier title url updatedAt priorityLabel state { name } assignee { name } creator { name } } }`,
+    { id },
+  );
+  const ms = Date.parse(issue.updatedAt);
+  return {
+    key: `${name}:${issue.identifier}:state`,
+    source: name,
+    kind: "linear",
+    channel: issue.identifier,
+    ts: (ms / 1000).toFixed(3),
+    time: issue.updatedAt,
+    author: issue.creator?.name ?? "unknown",
+    text: `${issue.identifier} "${issue.title}": ${issue.state.name} · ${issue.assignee ? `assigned to ${issue.assignee.name}` : "unassigned"} · ${issue.priorityLabel} priority — ${issue.url}`,
+    url: issue.url,
+  };
+}
