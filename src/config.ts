@@ -229,6 +229,14 @@ export const Config = z
         // Mirrors loud follow-ups to a todo app; see scripts/reminders for the protocol
         todo: Argv.optional(),
         timeout: Duration.prefault("30s"),
+        // Work hours before the first reminder (at most 1h for high asks), then between reminders
+        first: Duration.prefault("4h"),
+        again: Duration.prefault("8h"),
+        // Reminders per follow-up before it expires; 0 leaves reminding to the digest or todo app
+        reminders: z.number().int().min(0).prefault(2),
+        // Cron, local time: one "Still open" notification listing every waiting follow-up, at the
+        // first work-hours run after each occurrence. Follow-ups then stay open until handled or 7d.
+        digest: Cron.optional(),
       })
       .strict()
       .prefault({}),

@@ -1,8 +1,7 @@
 import { minimalEnv } from "./actions";
-import type { Config } from "./config";
 import type { Followups, Loop } from "./followups";
 
-type Todo = Config["followups"] & { todo: string[] };
+type Todo = { todo: string[]; timeout: number };
 
 /** Runs the adapter with one verb and returns its stdout; a nonzero exit throws. */
 async function call(root: string, cfg: Todo, args: string[], stdin?: object): Promise<string> {

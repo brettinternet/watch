@@ -13,6 +13,7 @@ import {
 } from "./config";
 import {
   changes,
+  digest,
   due as dueFollowups,
   type Evidence,
   type Followups,
@@ -265,10 +266,20 @@ async function main(dryRun: boolean): Promise<number> {
   };
   const ledgerFile = ledgerPath(root);
   const ledgerBefore = readState<Followups>(ledgerFile);
-  let ledger: Followups = updateFollowups(ledgerBefore, evidence);
-  const reminders = afterHours ? [] : dueFollowups(ledger, evidence, fresh);
+  let ledger: Followups = updateFollowups(ledgerBefore, evidence, cfg.followups);
+  const reminders = afterHours
+    ? []
+    : dueFollowups(ledger, evidence, fresh, cfg.followups.reminders);
+  // The digest lists every waiting follow-up at the first work-hours run after each occurrence.
+  const lastDigestPath = join(stateDir, "last-digest");
+  const lastDigest = existsSync(lastDigestPath)
+    ? Date.parse(readFileSync(lastDigestPath, "utf8")) || undefined
+    : undefined;
+  const digesting =
+    !afterHours && !!cfg.followups.digest && due(cfg.followups.digest, lastDigest, now);
+  const listed = digesting ? digest(ledger, evidence) : reminders;
   const still = stillOpen(
-    reminders.map(([, l]) => l),
+    listed.map(([, l]) => l),
     now,
   );
 
@@ -302,9 +313,9 @@ async function main(dryRun: boolean): Promise<number> {
         ]
       : [
           rank(top) >= rank("high") ? ("high" as const) : ("low" as const),
-          clip(`Still open: ${still[0]}`, 100),
+          clip(`Still open: ${still.length > 1 ? `${still.length} follow-ups` : still[0]}`, 100),
           joinSummary(still),
-          reminders.find(([, l]) => l.url)?.[1].url,
+          listed.find(([, l]) => l.url)?.[1].url,
         ];
     const argv = tellArgv(root, cfg.notify, p, title, body, url);
     if (dryRun) console.log(`\nwould run: ${argv.slice(0, -1).join(" ")} <summary>`);
@@ -318,8 +329,15 @@ async function main(dryRun: boolean): Promise<number> {
       }
       notified = true;
       // A reminder clipped out of the message wasn't delivered, so it stays due.
-      const shown = reminders.filter((_, i) => body.includes(still[i]!)).map(([id]) => id);
-      ledger = remind(ledger, shown, now, cfg.work_hours);
+      const remindable = new Set(reminders.map(([id]) => id));
+      const shown = listed.filter(([id], i) => remindable.has(id) && body.includes(still[i]!));
+      ledger = remind(
+        ledger,
+        shown.map(([id]) => id),
+        now,
+        cfg.work_hours,
+        cfg.followups.again,
+      );
     }
   }
 
@@ -342,6 +360,7 @@ async function main(dryRun: boolean): Promise<number> {
         minPriority,
         now,
         work: cfg.work_hours,
+        first: cfg.followups.first,
         signals: all,
       });
   }
@@ -350,6 +369,8 @@ async function main(dryRun: boolean): Promise<number> {
   if (todo && dryRun) console.log(`would sync follow-ups with ${todo.join(" ")}`);
   else if (todo) ledger = await syncTodos(root, { ...cfg.followups, todo }, ledger, now);
   if (!dryRun) saveFollowups(ledgerFile, ledger);
+  if (digesting && dryRun) console.log(`would send the follow-up digest (${listed.length})`);
+  else if (digesting) writeFileSync(lastDigestPath, new Date(now).toISOString(), { mode: 0o600 });
   if (!dryRun && scheduled.length) {
     const next: Collected = {};
     for (const [id] of scheduled) {

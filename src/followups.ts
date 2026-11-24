@@ -10,8 +10,8 @@ import { type Mine, THREAD_STREAM } from "./sources/slack";
 /**
  * Asks of me that were notified, or that came straight to me and the LLM rated below the
  * threshold, tracked until the source shows them handled. Reminders ride along on the next
- * notification, or go out quietly on their own, at most MAX_REMINDERS times, or once when I've
- * seen the ask and chose not to answer yet.
+ * notification, or go out quietly on their own, at most `followups.reminders` times, or once when
+ * I've seen the ask and chose not to answer yet. A `followups.digest` lists them all on a schedule.
  */
 export type Loop = {
   ask: string;
@@ -48,14 +48,14 @@ export type Evidence = {
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
-const MAX_REMINDERS = 2;
-const REMIND_AGAIN = 8 * HOUR; // work hours, so about the next work day
 const TTL = 7 * DAY; // open loops expire, and closed ones are forgotten, this long after
 const ASKS = new Set(["request", "review"]);
 
+type Settings = Config["followups"];
+
 /** Work hours before the first reminder. */
-const firstDelay = (p: Priority, silent: boolean) =>
-  !silent && rank(p) >= rank("high") ? HOUR : 4 * HOUR;
+const firstDelay = (p: Priority, silent: boolean, first: number) =>
+  !silent && rank(p) >= rank("high") ? Math.min(HOUR, first) : first;
 
 const isReview = (s: Anchor) => s.kind === "github" && !!s.stream?.endsWith(":review");
 /** Kinds with a way to see an ask handled. */
@@ -200,13 +200,17 @@ export function status(a: Anchor, ev: Evidence): { state: State; reason?: string
 const seen = (states: State[]) =>
   states.includes("open") && !states.includes("pending") && !states.includes("unsure");
 /** Reminders a loop gets: one once I've seen it without acting, since I may have chosen to wait. */
-const limit = (states: State[]) => (seen(states) ? 1 : MAX_REMINDERS);
+const limit = (states: State[], max: number) => (seen(states) ? Math.min(1, max) : max);
+/** Still waiting on me; a silent loop only while unread or requested. */
+const waiting = (l: Loop, states: State[]) =>
+  states.includes("pending") || (!l.silent && states.length > 0);
 
 /**
  * Closes loops the evidence shows handled, silent loops read without a reply, and loops past
- * their last reminder or TTL, and forgets loops closed more than TTL ago.
+ * TTL or, unless a digest or todo app keeps listing them, their last reminder. Forgets loops closed
+ * more than TTL ago.
  */
-export function update(ledger: Followups, ev: Evidence): Followups {
+export function update(ledger: Followups, ev: Evidence, cfg: Settings): Followups {
   const { now } = ev;
   const at = new Date(now).toISOString();
   const next: Followups = {};
@@ -224,7 +228,10 @@ export function update(ledger: Followups, ev: Evidence): Followups {
       : loop.silent && seen(states)
         ? "read without reply"
         : now - Date.parse(loop.opened) >= TTL ||
-            (loop.reminded.length >= limit(states) && Date.parse(loop.next) <= now)
+            (!cfg.digest &&
+              cfg.reminders > 0 &&
+              loop.reminded.length >= limit(states, cfg.reminders) &&
+              Date.parse(loop.next) <= now)
           ? "expired"
           : undefined;
     next[id] = reason ? { ...loop, closed: { at, reason } } : loop;
@@ -238,7 +245,12 @@ export function update(ledger: Followups, ev: Evidence): Followups {
  * new signals this run are skipped, since the summary already covers them, and so are loops with
  * a todo, whose app reminds instead.
  */
-export function due(ledger: Followups, ev: Evidence, fresh: Signal[]): [string, Loop][] {
+export function due(
+  ledger: Followups,
+  ev: Evidence,
+  fresh: Signal[],
+  max: number,
+): [string, Loop][] {
   const { now } = ev;
   const active = new Set(fresh.map(conv));
   return Object.entries(ledger)
@@ -253,12 +265,33 @@ export function due(ledger: Followups, ev: Evidence, fresh: Signal[]): [string, 
     .filter(([, l]) => {
       const states = deciding(l).map((a) => status(a, ev).state);
       if (states.includes("unknown")) return false;
-      const waiting = states.includes("pending") || (!l.silent && states.length > 0);
-      return waiting && l.reminded.length < limit(states);
+      return waiting(l, states) && l.reminded.length < limit(states, max);
     })
-    .sort(
-      ([, a], [, b]) => rank(b.priority) - rank(a.priority) || a.opened.localeCompare(b.opened),
-    );
+    .sort(byImportance);
+}
+
+const byImportance = ([, a]: [string, Loop], [, b]: [string, Loop]) =>
+  rank(b.priority) - rank(a.priority) || a.opened.localeCompare(b.opened);
+
+/**
+ * Open loops for the digest: every one past its first reminder time that still waits on me,
+ * including those reminded out or in a todo app, but not snoozed ones. A loud loop counts even
+ * when this run couldn't check it.
+ */
+export function digest(ledger: Followups, ev: Evidence): [string, Loop][] {
+  const { now } = ev;
+  return Object.entries(ledger)
+    .filter(
+      ([, l]) =>
+        !l.closed &&
+        (Date.parse(l.next) <= now || l.reminded.length > 0) &&
+        (!l.snoozed || Date.parse(l.snoozed) <= now) &&
+        waiting(
+          l,
+          deciding(l).map((a) => status(a, ev).state),
+        ),
+    )
+    .sort(byImportance);
 }
 
 /** Records a reminder for each loop and schedules the next. */
@@ -267,9 +300,10 @@ export function remind(
   ids: string[],
   now: number,
   work: Config["work_hours"],
+  again: number,
 ): Followups {
   const next = { ...ledger };
-  const nextAt = new Date(afterWork(work, now, REMIND_AGAIN)).toISOString();
+  const nextAt = new Date(afterWork(work, now, again)).toISOString();
   for (const id of ids)
     next[id] = {
       ...next[id]!,
@@ -295,6 +329,8 @@ export function track(
     minPriority: Priority;
     now: number;
     work: Config["work_hours"];
+    /** Work hours before the first reminder. */
+    first: number;
     /** Everything collected this run, to link mentions to. */
     signals: Signal[];
   },
@@ -327,7 +363,9 @@ export function track(
       anchors,
       ...(url ? { url } : {}),
       opened: at,
-      next: new Date(afterWork(opts.work, opts.now, firstDelay(priority, silent))).toISOString(),
+      next: new Date(
+        afterWork(opts.work, opts.now, firstDelay(priority, silent, opts.first)),
+      ).toISOString(),
       reminded: [],
     };
   };
@@ -410,7 +448,7 @@ function cli(args: string[]): number {
       const tags = [
         l.priority,
         l.silent && "silent",
-        l.todo ? "in todo app" : `${l.reminded.length}/${MAX_REMINDERS}`,
+        l.todo ? "in todo app" : `reminded ${l.reminded.length}x`,
       ];
       console.log(
         `${id}  ${stillOpen([l], now)[0]}\n      ${tags.filter(Boolean).join(" · ")} · ${when}${l.url ? ` · ${l.url}` : ""}`,

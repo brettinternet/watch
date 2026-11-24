@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import type { Item } from "./actions";
-import type { Config } from "./config";
-import { due, type Evidence, type Followups, remind, track, update } from "./followups";
+import { Config } from "./config";
+import * as F from "./followups";
+import type { Evidence, Followups } from "./followups";
 import type { Signal } from "./signal";
 import type { Mine } from "./sources/slack";
 
@@ -50,8 +51,15 @@ const item = (signals: Signal[], priority: Item["priority"], category: string): 
   reason: signals.at(-1)!.text,
   signals,
 });
+const settings = Config.shape.followups.parse({});
 const opts = (now: number, notified = true, signals: Signal[] = []) =>
-  ({ notified, minPriority: "normal", now, work, signals }) as const;
+  ({ notified, minPriority: "normal", now, work, first: settings.first, signals }) as const;
+const track = F.track;
+const update = (l: Followups, ev: Evidence, cfg = settings) => F.update(l, ev, cfg);
+const due = (l: Followups, ev: Evidence, fresh: Signal[]) =>
+  F.due(l, ev, fresh, settings.reminders);
+const remind = (l: Followups, ids: string[], now: number) =>
+  F.remind(l, ids, now, work, settings.again);
 const open = (l: Followups) => Object.values(l).filter((x) => !x.closed);
 const reason = (l: Followups) => Object.values(l)[0]!.closed?.reason;
 
@@ -66,10 +74,10 @@ test("a notified ask reminds on the work-hours clock twice while unread, once af
   const first = due(ledger, unread(at(23, 11)), []);
   expect(first.map(([, l]) => l.ask)).toEqual(["Sam · @sam: can you approve the rollout?"]);
 
-  ledger = remind(ledger, [first[0]![0]], at(23, 11), work);
+  ledger = remind(ledger, [first[0]![0]], at(23, 11));
   expect(due(ledger, unread(at(23, 17)), [])).toEqual([]);
   expect(reason(update(ledger, evidence(at(24, 9), [], [])))).toBe("expired");
-  ledger = remind(ledger, [first[0]![0]], at(24, 9), work); // Tuesday 9:00, 8 work hours on
+  ledger = remind(ledger, [first[0]![0]], at(24, 9)); // Tuesday 9:00, 8 work hours on
   ledger = update(ledger, unread(at(24, 17))); // Tuesday 17:00, next due
   expect(open(ledger)).toEqual([]);
   expect(reason(ledger)).toBe("expired");
@@ -199,4 +207,25 @@ test("a new ask in the same thread replaces its loop, but a silent one never doe
   const loud = track(ledger, [item([later], "normal", "request")], [later], opts(asked));
   expect(open(loud).map((l) => l.ask)).toEqual(["Sam · #ops: ping?"]);
   expect(Object.values(loud).find((l) => l.closed)?.closed?.reason).toStartWith("superseded");
+});
+
+test("with reminders off, a digest lists what still waits and keeps it open until handled", () => {
+  const asked = at(23, 9);
+  const later = at(24, 9);
+  const dm = slack("can you approve the rollout?", asked);
+  const quiet = slack("got a sec?", asked, { channel: "@kim", key: "acme:@kim:1" });
+  const cfg = Config.shape.followups.parse({ reminders: 0, digest: "0 9 * * 1-5" });
+  const opened = { ...opts(asked), first: cfg.first };
+  const ledger = track({}, [item([dm], "normal", "request")], [dm, quiet], opened);
+  const unread = evidence(later, [dm, quiet], []);
+
+  expect(F.due(ledger, unread, [], cfg.reminders)).toEqual([]);
+  expect(F.digest(ledger, evidence(at(23, 12), [dm, quiet], []))).toEqual([]); // not 4h yet
+  // A silent loop is listed only while unread; the loud one regardless.
+  const listed = (ev: Evidence) => F.digest(ledger, ev).map(([, l]) => l.silent ?? false);
+  expect(listed(unread)).toEqual([false, true]);
+  expect(listed(evidence(later, [], []))).toEqual([false]);
+  // Days later, past where two reminders would have expired it, the loud loop is still open.
+  const friday = update(ledger, evidence(at(27, 17), [dm], []), cfg);
+  expect(open(friday).map((l) => l.ask)).toEqual(["Sam · @sam: can you approve the rollout?"]);
 });
