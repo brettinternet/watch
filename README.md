@@ -233,6 +233,23 @@ It reads the item's key from `$NOON_EVENT_FILE` and offers these tools, all acti
 
 Before each action runs, watch records the item's Slack messages and signal keys in `.state/replies.json`, kept for 7 days, and the server touches only those. The Slack tools take a signal key from the item and can omit it when the item has one thread. The tokens stay in the server and its slack-mcp-server process, and the action environment still has no secrets. Thread `mark_read` and `save` call Slack's internal web API directly with the `xoxc`/`xoxd` session, like `agenda`, since slack-mcp-server lacks them.
 
+A job that clears small items for you:
+
+```yaml
+# ~/dev/service/.git/noon.yaml
+jobs:
+    handle:
+        requests: each
+        prompt: |
+            Read the triage item in the JSON file at $NOON_EVENT_FILE. Use the slack-reply tools;
+            read_thread first if the item alone doesn't make it clear.
+            - Trivial (thanks, acknowledgments, FYIs, automated notices, nothing asked of me):
+              mark_read each Slack message, then dismiss.
+            - Not urgent, can wait, and `date` shows it's past 3pm: snooze until 8am the next
+              workday (Mon-Fri), as a duration in hours, e.g. 17h.
+            - Otherwise change nothing.
+```
+
 A message can steer the agent into posting what it read, such as repository code, to that thread, where everyone in it can read it. Use it only where that's acceptable.
 
 ## Daily agenda
