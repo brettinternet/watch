@@ -208,7 +208,7 @@ jobs:
 
 Message text is untrusted input. Give that agent read-only tools.
 
-### Slack replies
+### Slack tools for actions
 
 To let the agent answer, add the `slack-reply` MCP server to the receiving repository's agent config:
 
@@ -220,7 +220,18 @@ To let the agent answer, add the `slack-reply` MCP server to the receiving repos
 }
 ```
 
-It reads the item's key from `$NOON_EVENT_FILE` and offers three tools, `reply` (posts in the thread of one of the item's Slack messages), `react` (adds an emoji to one, or with `thread`, to its thread root), and `mark_read` (marks a top-level message read, with everything before it in its channel, and only while it's still unread, so newer messages stay unread). All act as you. Before each action runs, watch records the item's Slack messages in `.state/replies.json`, kept for 7 days, and the server writes only there. The tools take a signal key from the item and can omit it when the item has one thread. The tokens stay in the server's slack-mcp-server process, and the action environment still has no secrets.
+It reads the item's key from `$NOON_EVENT_FILE` and offers these tools, all acting as you:
+
+| Tool                | Does                                                                                                                                                                            |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read_thread`       | Reads the thread of one of the item's Slack messages, up to 100 messages.                                                                                                       |
+| `reply`             | Posts in that thread.                                                                                                                                                           |
+| `react`             | Adds an emoji to the message, or with `thread`, to its thread root.                                                                                                             |
+| `mark_read`         | Marks a channel message read, with everything before it in its channel, only while it's still unread so newer messages stay unread. A thread reply marks its whole thread read. |
+| `save`              | Adds the message to your Slack saved items, with `remind_in` (e.g. `2h`) due then.                                                                                              |
+| `dismiss`, `snooze` | Closes, or holds off for `for` (e.g. `4h`), the follow-ups on the item's signals.                                                                                               |
+
+Before each action runs, watch records the item's Slack messages and signal keys in `.state/replies.json`, kept for 7 days, and the server touches only those. The Slack tools take a signal key from the item and can omit it when the item has one thread. The tokens stay in the server and its slack-mcp-server process, and the action environment still has no secrets. Thread `mark_read` and `save` call Slack's internal web API directly with the `xoxc`/`xoxd` session, like `agenda`, since slack-mcp-server lacks them.
 
 A message can steer the agent into posting what it read, such as repository code, to that thread, where everyone in it can read it. Use it only where that's acceptable.
 

@@ -361,14 +361,6 @@ async function main(dryRun: boolean): Promise<number> {
   }
 
   if (triaged) {
-    for (const { name, action, item } of runs) {
-      if (dryRun) console.log(`would run action ${name} for: ${item.reason}`);
-      else {
-        const err = await runAction(root, name, action, item);
-        if (err) failures.push(err);
-      }
-    }
-    if (!dryRun) writeState(cursorsPath, prune(advance(cursors, fresh), minTs, windows));
     if (!afterHours)
       ledger = track(ledger, items, fresh, {
         notified: carrier,
@@ -378,6 +370,16 @@ async function main(dryRun: boolean): Promise<number> {
         first: cfg.followups.first,
         signals: all,
       });
+    // Saved before actions run, so their agents can dismiss or snooze the loops just opened.
+    if (!dryRun && runs.length) saveFollowups(ledgerFile, ledger);
+    for (const { name, action, item } of runs) {
+      if (dryRun) console.log(`would run action ${name} for: ${item.reason}`);
+      else {
+        const err = await runAction(root, name, action, item);
+        if (err) failures.push(err);
+      }
+    }
+    if (!dryRun) writeState(cursorsPath, prune(advance(cursors, fresh), minTs, windows));
   }
   for (const c of changes(ledgerBefore, ledger)) console.log(`follow-up ${c}`);
   const { todo } = cfg.followups;

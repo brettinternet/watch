@@ -8,7 +8,7 @@ import { resolve } from "node:path";
 import { loadConfig } from "./config";
 import { clip } from "./llm";
 import { notify, tellArgv } from "./notify";
-import { serverEnv } from "./sources/slack";
+import { type WebApi, webApi } from "./sources/slack";
 
 const NOOP = 78;
 const OUTLOOK_CALENDAR = "AFV5ECLBZ"; // Slack's app ID, the same in every workspace
@@ -19,31 +19,9 @@ type Block = {
   accessory?: { type?: string };
 };
 type View = { hash: string; blocks: Block[] };
-type Api = (method: string, args?: Record<string, string>) => Promise<any>;
 export type Meeting = { title: string; start?: Date; end?: Date };
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
-/** Slack's internal web API with this workspace's desktop session, which the Home tab needs. */
-function slackApi(name: string): Api {
-  const env = serverEnv(name, process.env, "");
-  const token = env.SLACK_MCP_XOXC_TOKEN;
-  if (!token) throw new Error(`agenda needs SLACK_${name.toUpperCase()}_XOXC_TOKEN/XOXD_TOKEN`);
-  return async (method, args = {}) => {
-    const form = new FormData();
-    form.set("token", token);
-    for (const [k, v] of Object.entries(args)) form.set(k, v);
-    const res = await fetch(`https://slack.com/api/${method}`, {
-      method: "POST",
-      body: form,
-      headers: { cookie: `d=${env.SLACK_MCP_XOXD_TOKEN}`, "user-agent": env.SLACK_MCP_USER_AGENT! },
-      signal: AbortSignal.timeout(15_000),
-    });
-    const json = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as any;
-    if (!json.ok) throw new Error(`slack/${name} ${method}: ${json.error ?? "failed"}`);
-    return json;
-  };
-}
 
 const epochs = (text: string) =>
   [...text.matchAll(/<!date\^(\d+)\^/g)].map((m) => new Date(Number(m[1]) * 1000));
@@ -69,7 +47,7 @@ export function meetings(blocks: Block[]): Meeting[] {
 
 /** Today's Home tab, freshly published: opening the tab asks the app to re-render it, so wait
  * for a new hash that shows today's date. Undefined when this workspace lacks the app. */
-async function todayBlocks(api: Api): Promise<Block[] | undefined> {
+async function todayBlocks(api: WebApi): Promise<Block[] | undefined> {
   const profile = await api("apps.profile.get", { app: OUTLOOK_CALENDAR }).catch((e) => {
     if (message(e).endsWith("app_not_found")) return undefined;
     throw e;
@@ -110,7 +88,7 @@ async function main(dryRun: boolean): Promise<number> {
   }
 
   let blocks: Block[] | undefined;
-  for (const name of sources) if ((blocks = await todayBlocks(slackApi(name)))) break;
+  for (const name of sources) if ((blocks = await todayBlocks(webApi(name, process.env)))) break;
   if (!blocks) throw new Error(`Outlook Calendar isn't installed in slack/${sources.join(", ")}`);
 
   const list = meetings(blocks);

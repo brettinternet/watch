@@ -44,4 +44,11 @@ test("an action's agent may write only to its item's Slack threads", () => {
   const both = readState<Replies>(join(stateDir, "replies.json"))[itemKey(two)]!.targets;
   expect(() => replyTarget(both)).toThrow("several threads");
   expect(replyTarget(both, reply.key).thread).toBe("1700000001.000000");
+
+  // An item without Slack messages is still recorded, so its agent can settle its follow-ups.
+  const pr = item([sig("github", "acme/api", "2")]);
+  recordReplies(stateDir, pr, Date.now());
+  const record = readState<Replies>(join(stateDir, "replies.json"))[itemKey(pr)]!;
+  expect(record.keys).toEqual(["acme:acme/api:2"]);
+  expect(() => replyTarget(record.targets)).toThrow("no Slack messages");
 });

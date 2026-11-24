@@ -23,7 +23,7 @@ export type Loop = {
   opened: string;
   next: string;
   reminded: string[];
-  /** Set only by the CLI. */
+  /** Set only by the CLI or an action's agent. */
   snoozed?: string;
   /** Its todo in the app `followups.todo` syncs with, which then does the reminding. */
   todo?: { id: string; done?: true };
@@ -445,6 +445,12 @@ export function changes(before: Followups, after: Followups): string[] {
 
 export const ledgerPath = (root: string) => join(root, ".state", "followups.json");
 
+/** Dismisses a loop, or snoozes it until `until`; `save` keeps either over a concurrent run. */
+export const settle = (loop: Loop, now: number, until?: number): Loop =>
+  until === undefined
+    ? { ...loop, closed: { at: new Date(now).toISOString(), reason: "dismissed" } }
+    : { ...loop, snoozed: new Date(until).toISOString() };
+
 function cli(args: string[]): number {
   const path = ledgerPath(resolve(import.meta.dir, ".."));
   const ledger = readState<Followups>(path);
@@ -485,15 +491,14 @@ function cli(args: string[]): number {
     return 1;
   }
   const id = ids[0]!;
-  const at = new Date(now).toISOString();
-  if (cmd === "done") ledger[id] = { ...ledger[id]!, closed: { at, reason: "dismissed" } };
+  if (cmd === "done") ledger[id] = settle(ledger[id]!, now);
   else {
     const ms = Duration.safeParse(duration);
     if (!ms.success) {
       console.error(ms.error.issues[0]!.message);
       return 2;
     }
-    ledger[id] = { ...ledger[id]!, snoozed: new Date(now + ms.data).toISOString() };
+    ledger[id] = settle(ledger[id]!, now, now + ms.data);
   }
   writeState(path, ledger);
   console.log(

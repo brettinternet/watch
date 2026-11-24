@@ -53,7 +53,7 @@ export function actionEnv(env: Record<string, string | undefined>, name: string,
   };
 }
 
-/** A Slack message of a triaged item: its action's agent may react to it and reply in its thread. */
+/** A Slack message of a triaged item: its action's agent may act on it and its thread. */
 export type ReplyTarget = {
   /** The signal's key, which the agent names it by. */
   message: string;
@@ -63,14 +63,17 @@ export type ReplyTarget = {
   ts: string;
   thread: string;
 };
-/** Item key → when its action ran and where its agent may write. */
-export type Replies = Record<string, { at: number; targets: ReplyTarget[] }>;
+/**
+ * Item key → when its action ran, where its agent may write in Slack, and its signals' keys,
+ * whose follow-ups it may dismiss or snooze.
+ */
+export type Replies = Record<string, { at: number; targets: ReplyTarget[]; keys: string[] }>;
 
 const REPLIES_TTL_MS = 7 * 864e5;
 
 /**
- * Records the item's Slack messages, the only places `task slack:reply` lets its agent write.
- * A message whose channel id isn't in the triage cache is left out.
+ * Records what `task slack:reply` lets the item's agent touch: its Slack messages, leaving out
+ * one whose channel id isn't in the triage cache, and its signals' follow-ups.
  */
 export function recordReplies(stateDir: string, item: Item, now: number): void {
   const names = new Map<string, Map<string, string>>();
@@ -93,17 +96,21 @@ export function recordReplies(stateDir: string, item: Item, now: number): void {
         thread: s.thread ?? s.ts,
       });
   }
-  if (targets.length === 0) return;
   const path = join(stateDir, "replies.json");
   const replies = Object.fromEntries(
     Object.entries(readState<Replies>(path)).filter(([, r]) => now - r.at < REPLIES_TTL_MS),
   );
-  replies[itemKey(item)] = { at: now, targets: targets.sort((a, b) => compareTs(a.ts, b.ts)) };
+  replies[itemKey(item)] = {
+    at: now,
+    targets: targets.sort((a, b) => compareTs(a.ts, b.ts)),
+    keys: item.signals.map((s) => s.key),
+  };
   writeState(path, replies);
 }
 
 /** The target `message` names or, when omitted, the latest message of the item's only thread. */
 export function replyTarget(targets: ReplyTarget[], message?: string): ReplyTarget {
+  if (!targets.length) throw new Error("the item has no Slack messages");
   const keys = targets.map((t) => t.message).join(", ");
   if (message !== undefined) {
     const target = targets.find((t) => t.message === message);

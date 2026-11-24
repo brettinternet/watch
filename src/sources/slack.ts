@@ -47,6 +47,32 @@ export function serverEnv(
   };
 }
 
+export type WebApi = (method: string, args?: Record<string, string>) => Promise<any>;
+
+/**
+ * Slack's internal web API with this workspace's desktop session, for what slack-mcp-server
+ * lacks. It skips the server's custom TLS, which Enterprise Grid may notice.
+ */
+export function webApi(name: string, env: Record<string, string | undefined>): WebApi {
+  const out = serverEnv(name, env, "");
+  const token = out.SLACK_MCP_XOXC_TOKEN;
+  if (!token) throw new Error(`needs SLACK_${name.toUpperCase()}_XOXC_TOKEN/XOXD_TOKEN`);
+  return async (method, args = {}) => {
+    const form = new FormData();
+    form.set("token", token);
+    for (const [k, v] of Object.entries(args)) form.set(k, v);
+    const res = await fetch(`https://slack.com/api/${method}`, {
+      method: "POST",
+      body: form,
+      headers: { cookie: `d=${out.SLACK_MCP_XOXD_TOKEN}`, "user-agent": out.SLACK_MCP_USER_AGENT! },
+      signal: AbortSignal.timeout(15_000),
+    });
+    const json = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as any;
+    if (!json.ok) throw new Error(`slack/${name} ${method}: ${json.error ?? "failed"}`);
+    return json;
+  };
+}
+
 type Call = (tool: string, args: Record<string, unknown>) => Promise<Record<string, string>[]>;
 
 /** A workspace's running server, reused for collection and context so one triage run opens
