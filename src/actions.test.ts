@@ -2,7 +2,16 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Item, itemKey, type Replies, recordReplies, replyTarget } from "./actions";
+import {
+  actionRuns,
+  type Item,
+  itemKey,
+  loudRuns,
+  type Replies,
+  recordReplies,
+  replyTarget,
+} from "./actions";
+import { Config } from "./config";
 import { readState, type Signal } from "./signal";
 
 const sig = (kind: string, channel: string, ts: string, thread?: string): Signal => ({
@@ -51,4 +60,38 @@ test("an action's agent may write only to its item's Slack threads", () => {
   const record = readState<Replies>(join(stateDir, "replies.json"))[itemKey(pr)]!;
   expect(record.keys).toEqual(["acme:acme/api:2"]);
   expect(() => replyTarget(record.targets)).toThrow("no Slack messages");
+});
+
+test("a command action forces a notification only for items its signal filter matches", () => {
+  const { actions } = Config.parse({
+    version: 1,
+    llm: {},
+    categories: { fyi: "x" },
+    notify: {},
+    actions: {
+      deploy: {
+        when: {
+          sources: ["slack/acme"],
+          min_priority: "low",
+          channels: ["#deploys"],
+          to: ["me"],
+          bot: true,
+          text: "please verify|now on staging",
+        },
+        run: "true",
+      },
+    },
+  });
+  const low = (s: Partial<Signal>): Item => ({
+    priority: "low",
+    category: "fyi",
+    reason: "",
+    signals: [{ ...sig("slack", "#deploys", "1"), ...s }],
+  });
+  const loud = (item: Item) => loudRuns(actionRuns(actions, [item], Date.now())).length > 0;
+
+  expect(loud(low({ to: "me", bot: true, text: "PR #1 is now on Staging" }))).toBe(true);
+  expect(loud(low({ channel: "#general", to: "others", text: "invite?" }))).toBe(false);
+  expect(loud(low({ to: "me", text: "please verify" }))).toBe(false); // not a bot
+  expect(loud(low({ to: "me", bot: true, text: "deploy failed" }))).toBe(false);
 });

@@ -46,6 +46,9 @@ sources:
 #   investigate:
 #     when: { categories: [incident], min_priority: high }
 #     run: noon -C ~/dev/service run investigate --detach --key "$TRIAGE_KEY" --data -
+#   verify-staging: # signal filters: channels, to, bot, text (case-insensitive regex)
+#     when: { sources: [slack/acme], min_priority: low, channels: ["#deploys"], bot: true, text: now on staging }
+#     run: scripts/verify-staging
 #   clear: null # drop a shared built-in action from triage.yaml
 # Follow-ups: mirror loud ones to Apple Reminders, which then does the reminding, and tune
 # reminders; reminders: 0 leaves only the weekday-morning digest.

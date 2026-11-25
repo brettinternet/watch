@@ -25,6 +25,10 @@ export const raised = (p: Priority, signals: Signal[]) =>
 
 export type Triaged = { title: string; summary: string; items: Item[] };
 
+/** A summary line for an item, as "Name · #channel: reason". */
+export const itemLine = (i: Item) =>
+  `${i.signals.at(-1)!.author} · ${i.signals[0]!.channel}: ${i.reason}`;
+
 /**
  * Items from the LLM's triage with priorities raised to their signals' floors. Floored signals
  * the LLM skipped become items, and those and raised items the summary leaves out by its rules
@@ -69,9 +73,7 @@ export function toItems(t: Triage, signals: Signal[]): Triaged {
   if (!forced.length) return { title: t.title, summary: t.summary, items };
 
   forced.sort((a, b) => rank(b.priority) - rank(a.priority));
-  const lines = forced.map(
-    (i) => `${i.signals.at(-1)!.author} · ${i.signals[0]!.channel}: ${i.reason}`,
-  );
+  const lines = forced.map(itemLine);
   const rest = items.filter((i) => !forced.includes(i));
   const restTop = rest.reduce<Priority>((p, i) => higher(p, i.priority), "none");
   return {

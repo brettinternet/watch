@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { itemKey, matches, runAction } from "./actions";
+import { actionRuns, itemKey, loudRuns, runAction } from "./actions";
 import { runBuiltins } from "./builtins";
 import {
   type Config,
@@ -26,7 +26,7 @@ import {
   update as updateFollowups,
   watchedPrs,
 } from "./followups";
-import { floorOf, toItems } from "./items";
+import { floorOf, itemLine, toItems } from "./items";
 import { clip, joinSummary, triage, type Triage } from "./llm";
 import { notify, tellArgv } from "./notify";
 import { recheck } from "./recheck";
@@ -401,33 +401,35 @@ async function run(
   if (still.length) console.log(`\nstill open:\n${still.map((l) => `- ${l}`).join("\n")}`);
 
   // After hours, items below the threshold are held for work hours, so their actions wait too.
-  const runs = items
-    .filter((i) => !afterHours || rank(i.priority) >= rank(afterHours))
-    .flatMap((item) =>
-      Object.entries(cfg.actions)
-        .filter(([, action]) => matches(action, item, now))
-        .map(([name, action]) => ({ name, action, item })),
-    );
-  const actioned = [...new Set(runs.map((r) => r.name))];
-  log.actions = actioned;
+  const runs = actionRuns(
+    cfg.actions,
+    items.filter((i) => !afterHours || rank(i.priority) >= rank(afterHours)),
+    now,
+  );
+  const names = (rs: typeof runs) => [...new Set(rs.map((r) => r.name))];
+  log.actions = names(runs);
 
   // Reminders ride along on a notification that goes out anyway; alone they go out quietly
   // unless one was high. A command action notifies unless quiet, so a loud one never runs
-  // unannounced; built-in actions never do.
+  // unannounced; built-in actions never do. Below the threshold, the push covers only the
+  // items loud actions apply to, since the LLM's headline may say nothing needs attention.
   let notified = false;
   const commands = runs.filter((r) => r.action.run);
-  const loud = commands.some((r) => !r.action.quiet);
-  const carrier = !!triaged && (rank(priority) >= rank(minPriority) || loud);
+  const loud = loudRuns(runs);
+  const above = rank(priority) >= rank(minPriority);
+  const carrier = !!triaged && (above || loud.length > 0);
   if (carrier || still.length) {
     const block = `Still open:\n${still.map((l) => `• ${l}`).join("\n")}`;
     const top = reminders[0]?.[1].priority ?? "low";
+    const announced = [...new Set(loud.map((r) => r.item))].map(itemLine);
+    const actioned = names(commands);
     const [p, title, body, url] = carrier
       ? [
           priority,
-          triaged.title,
+          above ? triaged.title : clip(announced[0]!, 100),
           clip(
             [
-              triaged.summary,
+              above ? triaged.summary : joinSummary(announced),
               actioned.length && `Actions: ${actioned.join(", ")}`,
               still.length && block,
             ]
@@ -435,8 +437,10 @@ async function run(
               .join("\n"),
             1024,
           ),
-          // Link the newest linkable message of the first top-priority item.
-          items.find((i) => i.priority === priority)?.signals.findLast((s) => s.url)?.url,
+          // Link the newest linkable message of the headline's item.
+          (above ? items.find((i) => i.priority === priority) : loud[0]!.item)?.signals.findLast(
+            (s) => s.url,
+          )?.url,
         ]
       : [
           rank(top) >= rank("high") ? ("high" as const) : ("low" as const),

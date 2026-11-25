@@ -6,14 +6,43 @@ import { readChannels } from "./sources/slack";
 
 export type Item = { priority: Priority; category: string; reason: string; signals: Signal[] };
 
-export function matches(action: Action, item: Item, now: number): boolean {
-  const { categories, sources, min_priority, max_priority, after } = action.when;
+/**
+ * Whether an action applies to an item. Matching runs in code before the notify decision, so
+ * a command action that forces a notification applies to the item, not just its priority.
+ */
+function matches(action: Action, item: Item, now: number): boolean {
+  const { categories, min_priority, max_priority, after } = action.when;
   return (
     rank(item.priority) >= rank(min_priority) &&
     (!max_priority || rank(item.priority) <= rank(max_priority)) &&
     (after === undefined || new Date(now).getHours() >= after) &&
     (!categories || categories.includes(item.category)) &&
-    (!sources || item.signals.some((s) => sources.includes(sourceId(s))))
+    item.signals.some((s) => signalMatches(action.when, s))
+  );
+}
+
+export type Run = { name: string; action: Action; item: Item };
+
+/** Every action that applies to each item. */
+export function actionRuns(actions: Record<string, Action>, items: Item[], now: number): Run[] {
+  return items.flatMap((item) =>
+    Object.entries(actions)
+      .filter(([, action]) => matches(action, item, now))
+      .map(([name, action]) => ({ name, action, item })),
+  );
+}
+
+/** Command runs that force a notification, so a loud action never runs unannounced. */
+export const loudRuns = (runs: Run[]) => runs.filter((r) => r.action.run && !r.action.quiet);
+
+function signalMatches(when: Action["when"], s: Signal): boolean {
+  const { sources, channels, to, bot, text } = when;
+  return (
+    (!sources || sources.includes(sourceId(s))) &&
+    (!channels || channels.includes(s.channel.replace(/^#/, ""))) &&
+    (!to || (s.to !== undefined && to.includes(s.to))) &&
+    (bot === undefined || !!s.bot === bot) &&
+    (!text || text.test(s.text))
   );
 }
 

@@ -166,6 +166,30 @@ const Action = z
         min_priority: Priority.default("high"),
         max_priority: Priority.optional(),
         after: z.number().int().min(0).max(23).optional(), // local hour
+        // Signal filters: one of the item's signals must pass all set filters, and `sources`.
+        channels: z
+          .array(
+            z
+              .string()
+              .min(1)
+              .transform((c) => c.replace(/^#/, "")),
+          )
+          .min(1)
+          .optional(),
+        to: z.array(z.string().min(1)).min(1).optional(), // e.g. dm, me, my_thread, others
+        bot: z.boolean().optional(),
+        text: z // case-insensitive regex
+          .string()
+          .min(1)
+          .transform((s, ctx) => {
+            try {
+              return new RegExp(s, "i");
+            } catch (e) {
+              ctx.addIssue({ code: "custom", message: (e as Error).message });
+              return z.NEVER;
+            }
+          })
+          .optional(),
       })
       .strict(),
     // Either a command, which gets the item on stdin, or built-ins, which never notify.

@@ -196,9 +196,22 @@ actions:
         run: noon -C ~/dev/service run investigate --detach --key "$TRIAGE_KEY" --data -
 ```
 
-An action runs from this repository with the item as JSON on stdin (`action`, `key`, `priority`, `category`, `reason`, `signals`). Its environment has `TRIAGE_ACTION`, `TRIAGE_KEY`, `TRIAGE_PRIORITY`, and `TRIAGE_CATEGORY`, plus `PATH`, `HOME`, and locale variables, and no secrets. `TRIAGE_KEY` is stable per item, so Noon's `--key` drops duplicates. The notification lists the actions it runs, and a run always notifies, even below `notify.min_priority`, unless the action sets `quiet: true`, for actions that only tidy up.
+An action runs from this repository with the item as JSON on stdin (`action`, `key`, `priority`, `category`, `reason`, `signals`). Its environment has `TRIAGE_ACTION`, `TRIAGE_KEY`, `TRIAGE_PRIORITY`, and `TRIAGE_CATEGORY`, plus `PATH`, `HOME`, and locale variables, and no secrets. `TRIAGE_KEY` is stable per item, so Noon's `--key` drops duplicates. The notification lists the command actions it runs, and a run always notifies, even below `notify.min_priority`, unless the action sets `quiet: true`, for actions that only tidy up. Below `notify.min_priority`, the notification covers only the items those actions apply to.
 
-`when` also takes `max_priority` and `after`, a local hour from which the action applies.
+`when` also takes `max_priority` and `after`, a local hour from which the action applies, plus signal filters, so an action that notifies applies only to the messages it handles. One of the item's signals must pass every filter set, and `sources`:
+
+```yaml
+actions:
+    verify-staging:
+        when:
+            sources: [slack/acme]
+            min_priority: low
+            channels: ["#deploys"]
+            to: [me] # dm, me, my_thread, others, ...
+            bot: true
+            text: please verify|now on staging # case-insensitive regex
+        run: scripts/verify-staging
+```
 
 ### Built-in actions
 
