@@ -62,7 +62,7 @@ export type Context = { for: string; signal: Signal }[];
  * One message as a JSON line. Escaping `<` and `>` keeps any field from closing the
  * `<messages>` or `<context>` block and passing its text off as instructions.
  */
-const line = (cfg: Config, s: Signal, extra: Record<string, string>) =>
+export const messageLine = (cfg: Config, s: Signal, extra: Record<string, string>) =>
   JSON.stringify({
     ...extra,
     kind: s.kind,
@@ -95,8 +95,8 @@ export function buildPrompt(
       ? [`- ${id}: ${s.instructions.trim().replace(/\s+/g, " ")}`]
       : [],
   );
-  const messages = signals.map((s, i) => line(cfg, s, { id: `m${i + 1}` }));
-  const extra = context.map((c) => line(cfg, c.signal, { for: c.for }));
+  const messages = signals.map((s, i) => messageLine(cfg, s, { id: `m${i + 1}` }));
+  const extra = context.map((c) => messageLine(cfg, c.signal, { for: c.for }));
   return [
     ...instructions,
     ...(afterHours
@@ -134,22 +134,24 @@ export function extractJson(text: string): unknown {
   return JSON.parse(text.slice(start, end + 1));
 }
 
+/** The JSON value in an agent's output, whose format depends on the agent. */
+export function agentJson(agent: Config["llm"]["agent"], stdout: string): unknown {
+  if (agent !== "claude") return extractJson(stdout);
+  const out = JSON.parse(stdout) as {
+    is_error?: boolean;
+    result?: string;
+    structured_output?: unknown;
+  };
+  if (out.is_error) throw new Error(`claude: ${out.result ?? "error"}`);
+  return out.structured_output ?? extractJson(out.result ?? "");
+}
+
 export function parseOutput(
   agent: Config["llm"]["agent"],
   stdout: string,
   schema: TriageSchema,
 ): Triage {
-  let value: unknown;
-  if (agent === "claude") {
-    const out = JSON.parse(stdout) as {
-      is_error?: boolean;
-      result?: string;
-      structured_output?: unknown;
-    };
-    if (out.is_error) throw new Error(`claude: ${out.result ?? "error"}`);
-    value = out.structured_output ?? extractJson(out.result ?? "");
-  } else value = extractJson(stdout);
-  const t = schema.parse(value);
+  const t = schema.parse(agentJson(agent, stdout));
   return { ...t, title: clip(t.title, 100), summary: joinSummary(t.summary) };
 }
 
@@ -167,14 +169,26 @@ export async function triage(
   afterHours?: Priority,
 ): Promise<Triage> {
   const schema = triageSchema(Object.keys(cfg.categories));
-  const jsonSchema = z.toJSONSchema(schema, { target: "draft-7" }); // claude rejects 2020-12
-  const cmd = argv(cfg.llm, jsonSchema);
+  const jsonSchema = toJsonSchema(schema);
+  const prompt = buildPrompt(root, cfg, signals, jsonSchema, context, afterHours);
+  return parseOutput(cfg.llm.agent, await runAgent(cfg.llm, prompt, jsonSchema), schema);
+}
+
+export const toJsonSchema = (schema: z.ZodType) => z.toJSONSchema(schema, { target: "draft-7" }); // claude rejects 2020-12
+
+/** Runs the tool-less agent on `prompt` and returns its stdout. */
+export async function runAgent(
+  llm: Config["llm"],
+  prompt: string,
+  jsonSchema: object,
+): Promise<string> {
+  const cmd = argv(llm, jsonSchema);
   const proc = Bun.spawn(cmd, {
     cwd: tmpdir(), // keep repository context files out of the model's view
-    stdin: new Blob([buildPrompt(root, cfg, signals, jsonSchema, context, afterHours)]),
+    stdin: new Blob([prompt]),
     stdout: "pipe",
     stderr: "pipe",
-    timeout: cfg.llm.timeout,
+    timeout: llm.timeout,
   });
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -184,5 +198,5 @@ export async function triage(
   // claude -p --output-format json reports errors on stdout, not stderr
   if (code !== 0)
     throw new Error(`${cmd[0]} exited ${code}: ${(stderr.trim() || stdout.trim()).slice(-500)}`);
-  return parseOutput(cfg.llm.agent, stdout, schema);
+  return stdout;
 }

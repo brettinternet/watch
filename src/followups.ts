@@ -45,8 +45,17 @@ export type Evidence = {
   /** Everything collected, before handled signals are dropped. */
   signals: Signal[];
   now: number;
-  /** Slack source name → my recent messages and the caps on its unread scan. */
-  slack: Map<string, { mine: Mine[]; maxChannels: number; maxMessages: number }>;
+  /** Slack source name → my recent messages and reactions, and the caps on its unread scan. */
+  slack: Map<
+    string,
+    {
+      mine: Mine[];
+      /** `channel:ts` of messages I reacted to, which counts as answering them. */
+      reacted: Set<string>;
+      maxChannels: number;
+      maxMessages: number;
+    }
+  >;
   /** The PRs `watchedPrs` named, as github:owner/repo#N; a failed look-up is missing. */
   prs: Map<string, PrOutcome>;
 };
@@ -200,6 +209,8 @@ export function status(a: Anchor, ev: Evidence): { state: State; reason?: string
           (m.thread === root || (dm && !a.thread && !m.thread)),
       );
       if (replied) return { state: "resolved", reason: "replied in Slack" };
+      if (slack.reacted.has(`${a.channel}:${a.ts}`))
+        return { state: "resolved", reason: "reacted in Slack" };
       const unreads = ev.signals.filter((s) => same(s) && s.stream !== THREAD_STREAM);
       if (unreads.some((s) => s.key === a.key)) return { state: "pending" };
       // The scan keeps only so many channels and messages, so a missing message is read only
@@ -396,6 +407,8 @@ export function track(
     signals: Signal[];
     /** Configured GitHub repos, lowercase, whose mentioned PRs are looked up. */
     repos: Set<string>;
+    /** Signal key → PRs looked up for it, e.g. one the LLM resolved from a bare #N. */
+    checked?: Map<string, string[]>;
   },
 ): Followups {
   const next = { ...ledger };
@@ -403,7 +416,9 @@ export function track(
   const open = (signals: Signal[], ask: string, priority: Priority, silent: boolean) => {
     const id = loopId(signals);
     if (next[id]) return;
-    const mentioned = new Set(signals.flatMap((s) => refs(s.text)));
+    const mentioned = new Set(
+      signals.flatMap((s) => [...refs(s.text), ...(opts.checked?.get(s.key) ?? [])]),
+    );
     const keys = new Set([...signals.flatMap(ids), ...mentioned]);
     const overlapping = Object.entries(next).filter(
       ([, l]) => !l.closed && l.anchors.some((a) => ids(a).some((k) => keys.has(k))),

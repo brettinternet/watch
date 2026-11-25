@@ -313,7 +313,7 @@ async function threadReplies(
 export async function slackContext(
   name: string,
   server: SlackServer,
-  signals: Signal[],
+  signals: Pick<Signal, "channel" | "ts" | "thread">[],
 ): Promise<Signal[][]> {
   const channel = channelNamer(server.channels);
   const out: Signal[][] = [];
@@ -332,6 +332,29 @@ export async function slackContext(
     out.push(toSignals(name, server, rows));
   }
   return out;
+}
+
+/**
+ * The messages I reacted to lately, as `channel:ts` with channel named like the unread scan, so
+ * a reaction can answer a follow-up. Reaction rows from the server carry counts, not who reacted,
+ * so this asks Slack's web API.
+ */
+export async function myReactions(
+  name: string,
+  server: SlackServer,
+  env: Record<string, string | undefined>,
+): Promise<Set<string>> {
+  const res = (await webApi(name, env)("reactions.list", { limit: "100" })) as {
+    items?: { type: string; channel?: string; message?: { ts?: string } }[];
+  };
+  const channel = channelNamer(server.channels);
+  return new Set(
+    (res.items ?? []).flatMap((i) =>
+      i.type === "message" && i.channel && i.message?.ts
+        ? [`${channel(i.channel)}:${i.message.ts}`]
+        : [],
+    ),
+  );
 }
 
 type Channel = { id: string; name: string; im?: boolean; mpim?: boolean };

@@ -101,7 +101,8 @@ async function look(l: Lookup, servers: Map<string, SlackServer>): Promise<Signa
 
 /**
  * Runs the look-ups the LLM asked for and triages once more with what they found; otherwise,
- * or when nothing was found, returns `first`. A failed look-up is logged and skipped.
+ * or when nothing was found, keeps `first`. A failed look-up is logged and skipped. `checked`
+ * maps each signal key to the PRs looked up for it, so its follow-up can watch them.
  */
 export async function verify(
   root: string,
@@ -110,9 +111,15 @@ export async function verify(
   fresh: Signal[],
   first: Triage,
   afterHours?: Priority,
-): Promise<Triage> {
+): Promise<{ triage: Triage; checked: Map<string, string[]> }> {
   const wanted = lookups(cfg, fresh, first, afterHours ?? cfg.notify.min_priority);
-  if (wanted.length === 0) return first;
+  const checked = new Map<string, string[]>();
+  for (const l of wanted) {
+    const s = l.what === "pr" ? fresh[Number(l.for.slice(1)) - 1] : undefined;
+    if (l.what !== "pr" || !s) continue; // the LLM may name an id that doesn't exist
+    checked.set(s.key, [...(checked.get(s.key) ?? []), `github:${l.repo.toLowerCase()}#${l.n}`]);
+  }
+  if (wanted.length === 0) return { triage: first, checked };
 
   const seen = new Set(fresh.map((s) => s.key));
   const context: Context = [];
@@ -131,5 +138,8 @@ export async function verify(
     }
   }
   console.log(`context: ${context.length} entries from ${wanted.map(label).join(", ")}`);
-  return context.length ? triage(root, cfg, fresh, context, afterHours) : first;
+  return {
+    triage: context.length ? await triage(root, cfg, fresh, context, afterHours) : first,
+    checked,
+  };
 }

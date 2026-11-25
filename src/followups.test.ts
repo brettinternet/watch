@@ -40,11 +40,14 @@ const evidence = (
   mine: Mine[] | undefined,
   ran = ["slack/acme"],
   prs: Evidence["prs"] = new Map(),
+  reacted: string[] = [],
 ): Evidence => ({
   ran: new Set(ran),
   signals,
   now,
-  slack: new Map(mine ? [["acme", { mine, maxChannels: 30, maxMessages: 10 }]] : []),
+  slack: new Map(
+    mine ? [["acme", { mine, reacted: new Set(reacted), maxChannels: 30, maxMessages: 10 }]] : [],
+  ),
   prs,
 });
 const item = (signals: Signal[], priority: Item["priority"], category: string): Item => ({
@@ -121,6 +124,10 @@ test("a Slack ask closes on my later reply in its conversation, not an earlier o
 
   const answered = update(ledger, evidence(later, [], [reply(asked + 1000, ask.thread)]));
   expect(reason(answered)).toBe("replied in Slack");
+  // A reaction of mine on the ask answers it too, but not one on the thread's root.
+  const react = (m: string) => evidence(later, [], [], ["slack/acme"], new Map(), [m]);
+  expect(open(update(ledger, react(`#ops:${ask.thread}`)))).toHaveLength(1);
+  expect(reason(update(ledger, react(`#ops:${ask.ts}`)))).toBe("reacted in Slack");
 });
 
 test("a loop with one uncheckable anchor doesn't remind", () => {
@@ -244,6 +251,15 @@ test("a Slack ask about a PR closes once every PR it names merges or I review it
   expect(open(run(pr("MERGED", later)))).toHaveLength(1);
   expect(open(run(pr("MERGED", later), pr("MERGED", asked - 1000)))).toHaveLength(1);
   expect(reason(run(pr("MERGED", later), pr("OPEN", undefined, later)))).toBe("PR merged");
+
+  // A bare #N the LLM resolved and looked up is watched like a link.
+  const bare = slack("can you merge #9?", asked);
+  const checked = new Map([[bare.key, ["github:acme/api#9"]]]);
+  const resolved = track({}, [item([bare], "normal", "request")], [bare], {
+    ...opts(asked),
+    checked,
+  });
+  expect(open(resolved)[0]!.prs).toEqual(["github:acme/api#9"]);
 });
 
 test("a new ask in the same thread replaces its loop, but a silent one never does", () => {

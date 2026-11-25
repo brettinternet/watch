@@ -29,6 +29,7 @@ import {
 import { floorOf, toItems } from "./items";
 import { clip, joinSummary, triage, type Triage } from "./llm";
 import { notify, tellArgv } from "./notify";
+import { recheck } from "./recheck";
 import {
   advance,
   type CollectCtx,
@@ -51,7 +52,7 @@ import { collectHackernews } from "./sources/hackernews";
 import { collectJira } from "./sources/jira";
 import { collectKev } from "./sources/kev";
 import { collectLinear } from "./sources/linear";
-import { collectSlack, openServer, type SlackServer } from "./sources/slack";
+import { collectSlack, myReactions, openServer, type SlackServer } from "./sources/slack";
 import { collectTraffic } from "./sources/traffic";
 import { collectWeather } from "./sources/weather";
 import { syncTodos } from "./todo";
@@ -95,14 +96,16 @@ type RunLog = {
 async function main(dryRun: boolean): Promise<number> {
   const root = resolve(import.meta.dir, "..");
   const log: RunLog = { at: new Date().toISOString() };
+  const servers = new Map<string, SlackServer>();
   try {
-    log.exit = await run(root, dryRun, log);
+    log.exit = await run(root, dryRun, log, servers);
     return log.exit;
   } catch (e) {
     log.exit = 1;
     log.failures = [...(log.failures ?? []), message(e)];
     throw e;
   } finally {
+    await closeSlack(servers);
     if (!dryRun) {
       const stateDir = join(root, ".state");
       mkdirSync(stateDir, { recursive: true, mode: 0o700 });
@@ -111,7 +114,19 @@ async function main(dryRun: boolean): Promise<number> {
   }
 }
 
-async function run(root: string, dryRun: boolean, log: RunLog): Promise<number> {
+/** Closes the run's Slack sessions; a later call finds none left. */
+async function closeSlack(servers: Map<string, SlackServer>): Promise<void> {
+  const open = [...servers.values()];
+  servers.clear();
+  await Promise.all(open.map((s) => s.close().catch(() => {})));
+}
+
+async function run(
+  root: string,
+  dryRun: boolean,
+  log: RunLog,
+  servers: Map<string, SlackServer>,
+): Promise<number> {
   const cfg: Config = loadConfig(root);
   if (sourceIds(cfg).length === 0)
     throw new Error("no sources configured; add one to triage.local.yaml");
@@ -176,121 +191,113 @@ async function run(root: string, dryRun: boolean, log: RunLog): Promise<number> 
   if (skipped.size) console.log(`not due: ${[...skipped].join(", ")}`);
   const ran = new Set<string>();
 
-  // One slack-mcp-server per source for the whole run: a single Slack session covers both
-  // collection and the context pass, instead of re-authenticating between them.
-  const servers = new Map<string, SlackServer>();
+  // One slack-mcp-server per source for the whole run: a single Slack session covers
+  // collection, the context pass, and follow-up checks, instead of re-authenticating between them.
   let all: Signal[] = [];
   let fresh: Signal[] = [];
   let result: Triage | undefined;
+  let checked = new Map<string, string[]>();
   let collectFailed = false;
-  try {
-    const { slack, github, linear, jira, weather, traffic, hackernews, feed } = cfg.sources;
-    const { earthquake, airquality, dependabot, kev } = cfg.sources;
-    const collectors: [string, (ctx: CollectCtx) => Promise<Signal[]>][] = [
-      ...Object.entries(slack).map(([name, source]) => [
-        `slack/${name}`,
-        async (ctx: CollectCtx) => {
-          const server = await openServer(name, ctx);
-          servers.set(name, server);
-          return collectSlack(name, source, ctx, server);
-        },
-      ]),
-      ...Object.entries(github).map(([name, source]) => [
-        `github/${name}`,
-        (ctx: CollectCtx) => collectGithub(name, source, ctx),
-      ]),
-      ...Object.keys(linear).map((name) => [
-        `linear/${name}`,
-        (ctx: CollectCtx) => collectLinear(name, ctx),
-      ]),
-      ...Object.entries(jira).map(([name, source]) => [
-        `jira/${name}`,
-        (ctx: CollectCtx) => collectJira(name, source, ctx),
-      ]),
-      ...Object.entries(weather).map(([name, source]) => [
-        `weather/${name}`,
-        () => collectWeather(name, source),
-      ]),
-      ...Object.entries(traffic).map(([name, source]) => [
-        `traffic/${name}`,
-        (ctx: CollectCtx) => collectTraffic(name, source, ctx),
-      ]),
-      ...Object.entries(earthquake).map(([name, source]) => [
-        `earthquake/${name}`,
-        (ctx: CollectCtx) => collectEarthquake(name, source, ctx),
-      ]),
-      ...Object.entries(airquality).map(([name, source]) => [
-        `airquality/${name}`,
-        () => collectAirQuality(name, source),
-      ]),
-      ...Object.entries(dependabot).map(([name, source]) => [
-        `dependabot/${name}`,
-        (ctx: CollectCtx) => collectDependabot(name, source, ctx),
-      ]),
-      ...Object.entries(kev).map(([name, source]) => [
-        `kev/${name}`,
-        () => collectKev(name, source),
-      ]),
-      ...Object.entries(hackernews).map(([name, source]) => [
-        `hackernews/${name}`,
-        (ctx: CollectCtx) => collectHackernews(name, source, ctx),
-      ]),
-      ...Object.entries(feed).map(([name, source]) => [
-        `feed/${name}`,
-        () => collectFeed(name, source),
-      ]),
-    ] as [string, (ctx: CollectCtx) => Promise<Signal[]>][];
-    const collected = await Promise.all(
-      collectors.map(async ([id, collect]) => {
-        if (skipped.has(id)) return [];
-        const window = windows[id];
-        try {
-          const signals = await collect(
-            window ? { ...ctx, since: new Date(Number(window) * 1000).toISOString() } : ctx,
-          );
-          ran.add(id);
-          return signals;
-        } catch (e) {
-          failures.push(`source ${id}: ${message(e)}`);
-          return [];
-        }
-      }),
-    );
-    collectFailed = failures.length > 0;
-    all = collected.flat();
-    // Each channel's messages stay together in time order, so triage reads them as conversations.
-    fresh = unseen(all, cursors, minTs, windows)
-      .sort(
-        (a, b) =>
-          sourceId(a).localeCompare(sourceId(b)) ||
-          a.channel.localeCompare(b.channel) ||
-          a.time.localeCompare(b.time),
-      )
-      .map((s) => {
-        const floor = floorOf(cfg, s);
-        return floor ? { ...s, floor } : s;
-      });
-    console.log(`${all.length} unread, ${fresh.length} new`);
-    log.sources = Object.fromEntries(
-      [...ran].sort().map((id) => [id, all.filter((s) => sourceId(s) === id).length]),
-    );
-    log.new = fresh.length;
-
-    if (fresh.length > 0) {
+  const { slack, github, linear, jira, weather, traffic, hackernews, feed } = cfg.sources;
+  const { earthquake, airquality, dependabot, kev } = cfg.sources;
+  const collectors: [string, (ctx: CollectCtx) => Promise<Signal[]>][] = [
+    ...Object.entries(slack).map(([name, source]) => [
+      `slack/${name}`,
+      async (ctx: CollectCtx) => {
+        const server = await openServer(name, ctx);
+        servers.set(name, server);
+        return collectSlack(name, source, ctx, server);
+      },
+    ]),
+    ...Object.entries(github).map(([name, source]) => [
+      `github/${name}`,
+      (ctx: CollectCtx) => collectGithub(name, source, ctx),
+    ]),
+    ...Object.keys(linear).map((name) => [
+      `linear/${name}`,
+      (ctx: CollectCtx) => collectLinear(name, ctx),
+    ]),
+    ...Object.entries(jira).map(([name, source]) => [
+      `jira/${name}`,
+      (ctx: CollectCtx) => collectJira(name, source, ctx),
+    ]),
+    ...Object.entries(weather).map(([name, source]) => [
+      `weather/${name}`,
+      () => collectWeather(name, source),
+    ]),
+    ...Object.entries(traffic).map(([name, source]) => [
+      `traffic/${name}`,
+      (ctx: CollectCtx) => collectTraffic(name, source, ctx),
+    ]),
+    ...Object.entries(earthquake).map(([name, source]) => [
+      `earthquake/${name}`,
+      (ctx: CollectCtx) => collectEarthquake(name, source, ctx),
+    ]),
+    ...Object.entries(airquality).map(([name, source]) => [
+      `airquality/${name}`,
+      () => collectAirQuality(name, source),
+    ]),
+    ...Object.entries(dependabot).map(([name, source]) => [
+      `dependabot/${name}`,
+      (ctx: CollectCtx) => collectDependabot(name, source, ctx),
+    ]),
+    ...Object.entries(kev).map(([name, source]) => [`kev/${name}`, () => collectKev(name, source)]),
+    ...Object.entries(hackernews).map(([name, source]) => [
+      `hackernews/${name}`,
+      (ctx: CollectCtx) => collectHackernews(name, source, ctx),
+    ]),
+    ...Object.entries(feed).map(([name, source]) => [
+      `feed/${name}`,
+      () => collectFeed(name, source),
+    ]),
+  ] as [string, (ctx: CollectCtx) => Promise<Signal[]>][];
+  const collected = await Promise.all(
+    collectors.map(async ([id, collect]) => {
+      if (skipped.has(id)) return [];
+      const window = windows[id];
       try {
-        result = await triage(root, cfg, fresh, [], afterHours);
-        try {
-          result = await verify(root, cfg, servers, fresh, result, afterHours);
-        } catch (e) {
-          failures.push(`context: ${message(e)}`); // the first pass still stands
-        }
+        const signals = await collect(
+          window ? { ...ctx, since: new Date(Number(window) * 1000).toISOString() } : ctx,
+        );
+        ran.add(id);
+        return signals;
       } catch (e) {
-        failures.push(`llm: ${message(e)}`);
+        failures.push(`source ${id}: ${message(e)}`);
+        return [];
       }
+    }),
+  );
+  collectFailed = failures.length > 0;
+  all = collected.flat();
+  // Each channel's messages stay together in time order, so triage reads them as conversations.
+  fresh = unseen(all, cursors, minTs, windows)
+    .sort(
+      (a, b) =>
+        sourceId(a).localeCompare(sourceId(b)) ||
+        a.channel.localeCompare(b.channel) ||
+        a.time.localeCompare(b.time),
+    )
+    .map((s) => {
+      const floor = floorOf(cfg, s);
+      return floor ? { ...s, floor } : s;
+    });
+  console.log(`${all.length} unread, ${fresh.length} new`);
+  log.sources = Object.fromEntries(
+    [...ran].sort().map((id) => [id, all.filter((s) => sourceId(s) === id).length]),
+  );
+  log.new = fresh.length;
+
+  if (fresh.length > 0) {
+    try {
+      result = await triage(root, cfg, fresh, [], afterHours);
+      try {
+        ({ triage: result, checked } = await verify(root, cfg, servers, fresh, result, afterHours));
+      } catch (e) {
+        failures.push(`context: ${message(e)}`); // the first pass still stands
+      }
+    } catch (e) {
+      failures.push(`llm: ${message(e)}`);
     }
-  } finally {
-    // Close Slack sessions before actions, which may run long-lived agents.
-    await Promise.all([...servers.values()].map((s) => s.close().catch(() => {})));
   }
   if (fresh.length > 0 && !result) {
     for (const f of failures) console.error(f);
@@ -303,8 +310,15 @@ async function run(root: string, dryRun: boolean, log: RunLog): Promise<number> 
   const ledgerFile = ledgerPath(root);
   const ledgerBefore = readState<Followups>(ledgerFile);
   const prs = new Map<string, PrOutcome>();
-  await Promise.all(
-    watchedPrs(ledgerBefore, all).map(async (key) => {
+  // My reactions answer Slack asks; reading them needs the desktop session's web API.
+  const reacted = new Map<string, Set<string>>();
+  const asked = new Set(
+    Object.values(ledgerBefore).flatMap((l) =>
+      l.closed ? [] : l.anchors.flatMap((a) => (a.kind === "slack" ? [a.source] : [])),
+    ),
+  );
+  await Promise.all([
+    ...watchedPrs(ledgerBefore, all).map(async (key) => {
       const [, repo, n] = /^github:(.+)#(\d+)$/.exec(key)!;
       try {
         prs.set(key, await prOutcome(repo!, Number(n), process.env));
@@ -312,7 +326,16 @@ async function run(root: string, dryRun: boolean, log: RunLog): Promise<number> 
         console.error(`follow-up look-up ${repo}#${n}: ${message(e)}`);
       }
     }),
-  );
+    ...[...servers]
+      .filter(([name]) => asked.has(name) && process.env[`SLACK_${name.toUpperCase()}_XOXC_TOKEN`])
+      .map(async ([name, server]) => {
+        try {
+          reacted.set(name, await myReactions(name, server, process.env));
+        } catch (e) {
+          console.error(`follow-up reactions ${name}: ${message(e)}`);
+        }
+      }),
+  ]);
   const evidence: Evidence = {
     ran,
     signals: all,
@@ -321,15 +344,15 @@ async function run(root: string, dryRun: boolean, log: RunLog): Promise<number> 
       [...servers].map(([name, server]) => {
         const { max_channels, max_messages_per_channel } = cfg.sources.slack[name]!;
         const caps = { maxChannels: max_channels, maxMessages: max_messages_per_channel };
-        return [name, { mine: server.me.mine, ...caps }];
+        return [
+          name,
+          { mine: server.me.mine, reacted: reacted.get(name) ?? new Set<string>(), ...caps },
+        ];
       }),
     ),
     prs,
   };
   let ledger: Followups = updateFollowups(ledgerBefore, evidence, cfg.followups);
-  const reminders = afterHours
-    ? []
-    : dueFollowups(ledger, evidence, fresh, cfg.followups.reminders);
   // The digest lists every waiting follow-up at the first work-hours run after each occurrence.
   const lastDigestPath = join(stateDir, "last-digest");
   const lastDigest = existsSync(lastDigestPath)
@@ -337,7 +360,20 @@ async function run(root: string, dryRun: boolean, log: RunLog): Promise<number> 
     : undefined;
   const { digest: digestAt } = cfg.followups;
   const digesting = !afterHours && digestAt !== false && due(digestAt, lastDigest, now);
-  const listed = digesting ? digest(ledger, evidence) : reminders;
+  const remindable = (l: Followups) =>
+    afterHours ? [] : dueFollowups(l, evidence, fresh, cfg.followups.reminders);
+  const listable = (l: Followups) => (digesting ? digest(l, evidence) : remindable(l));
+  // Asks about to remind may have been handled by someone else since.
+  try {
+    const ids = [...remindable(ledger), ...listable(ledger)].map(([id]) => id);
+    if (ids.length) ledger = await recheck(cfg, servers, ledger, ids, now);
+  } catch (e) {
+    failures.push(`recheck: ${message(e)}`); // reminders go out unchecked
+  }
+  // Close Slack sessions before actions, which may run long-lived agents.
+  await closeSlack(servers);
+  const reminders = remindable(ledger);
+  const listed = listable(ledger);
   const still = stillOpen(
     listed.map(([, l]) => l),
     now,
@@ -441,6 +477,7 @@ async function run(root: string, dryRun: boolean, log: RunLog): Promise<number> 
         work: cfg.work_hours,
         first: cfg.followups.first,
         signals: all,
+        checked,
         repos: new Set(
           Object.values(cfg.sources.github).flatMap((g) => g.repos.map((r) => r.toLowerCase())),
         ),
