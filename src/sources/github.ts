@@ -177,6 +177,33 @@ export function reviewPrsToSignals(
     });
 }
 
+/** What follow-ups need to see a PR handled: merged or closed, or reviewed by me, and when. */
+export type PrOutcome = {
+  state: "OPEN" | "MERGED" | "CLOSED";
+  closedAt: string | null;
+  viewerLatestReview: { submittedAt: string } | null;
+};
+
+const OUTCOME = `query ($owner: String!, $name: String!, $n: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $n) { state closedAt viewerLatestReview { submittedAt } }
+  }
+}`;
+
+export async function prOutcome(
+  repo: string,
+  n: number,
+  env: CollectCtx["env"],
+): Promise<PrOutcome> {
+  const [owner, name] = repo.split("/");
+  const out = await gh(
+    ["api", "graphql", "-f", `query=${OUTCOME}`, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `n=${n}`],
+    env,
+  ); // prettier-ignore
+  return (JSON.parse(out) as { data: { repository: { pullRequest: PrOutcome } } }).data.repository
+    .pullRequest;
+}
+
 export type PrState = {
   number: number;
   title: string;

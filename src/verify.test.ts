@@ -21,7 +21,11 @@ test("look-ups stay within configured sources and the items worth a second pass"
     author: "Sam",
     text,
   });
-  const fresh = [msg("slack", "can you review acme/api#7?"), msg("github", "Merged: x")];
+  const fresh = [
+    msg("slack", "can you review acme/api#7?"),
+    msg("github", "Merged: x"),
+    msg("slack", "<https://github.com/acme/api/pull/9|#9> and evil/repo#2 merged, and #10?"),
+  ];
   const item = (ids: string[], priority: "low" | "normal", verify: string[]) => ({
     ids,
     priority,
@@ -42,6 +46,8 @@ test("look-ups stay within configured sources and the items worth a second pass"
         "ENG-5",
       ]),
       item(["m2"], "normal", ["thread"]), // no Slack message to read the thread of
+      // Linked PRs are looked up without being asked for, once, in configured repos only.
+      item(["m3"], "normal", ["Acme/API#9"]),
       item(["m1"], "low", ["acme/api#8"]), // below the threshold
     ],
   };
@@ -50,5 +56,6 @@ test("look-ups stay within configured sources and the items worth a second pass"
     { what: "thread", for: "m1", signal: fresh[0]! },
     { what: "pr", for: "m1", source: "work", repo: "Acme/API", n: 7 },
     { what: "issue", for: "m1", sources: ["acme"], issue: "ENG-4" },
+    { what: "pr", for: "m3", source: "work", repo: "Acme/API", n: 9 },
   ]);
 });

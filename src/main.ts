@@ -24,6 +24,7 @@ import {
   stillOpen,
   track,
   update as updateFollowups,
+  watchedPrs,
 } from "./followups";
 import { floorOf, toItems } from "./items";
 import { clip, joinSummary, triage, type Triage } from "./llm";
@@ -45,7 +46,7 @@ import { collectAirQuality } from "./sources/airquality";
 import { collectDependabot } from "./sources/dependabot";
 import { collectEarthquake } from "./sources/earthquake";
 import { collectFeed } from "./sources/feed";
-import { collectGithub } from "./sources/github";
+import { collectGithub, type PrOutcome, prOutcome } from "./sources/github";
 import { collectHackernews } from "./sources/hackernews";
 import { collectJira } from "./sources/jira";
 import { collectKev } from "./sources/kev";
@@ -297,8 +298,21 @@ async function run(root: string, dryRun: boolean, log: RunLog): Promise<number> 
     return 1;
   }
 
-  // Follow-ups close on what this run collected. After hours, held items come back in the
-  // work-hours summary, which opens and reminds them.
+  // Follow-ups close on what this run collected and the PRs they mention. After hours, held items
+  // come back in the work-hours summary, which opens and reminds them.
+  const ledgerFile = ledgerPath(root);
+  const ledgerBefore = readState<Followups>(ledgerFile);
+  const prs = new Map<string, PrOutcome>();
+  await Promise.all(
+    watchedPrs(ledgerBefore, all).map(async (key) => {
+      const [, repo, n] = /^github:(.+)#(\d+)$/.exec(key)!;
+      try {
+        prs.set(key, await prOutcome(repo!, Number(n), process.env));
+      } catch (e) {
+        console.error(`follow-up look-up ${repo}#${n}: ${message(e)}`);
+      }
+    }),
+  );
   const evidence: Evidence = {
     ran,
     signals: all,
@@ -310,9 +324,8 @@ async function run(root: string, dryRun: boolean, log: RunLog): Promise<number> 
         return [name, { mine: server.me.mine, ...caps }];
       }),
     ),
+    prs,
   };
-  const ledgerFile = ledgerPath(root);
-  const ledgerBefore = readState<Followups>(ledgerFile);
   let ledger: Followups = updateFollowups(ledgerBefore, evidence, cfg.followups);
   const reminders = afterHours
     ? []
@@ -428,6 +441,9 @@ async function run(root: string, dryRun: boolean, log: RunLog): Promise<number> 
         work: cfg.work_hours,
         first: cfg.followups.first,
         signals: all,
+        repos: new Set(
+          Object.values(cfg.sources.github).flatMap((g) => g.repos.map((r) => r.toLowerCase())),
+        ),
       });
     const built = await runBuiltins(
       runs.filter((r) => r.action.do),

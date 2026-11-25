@@ -1,4 +1,5 @@
 import { type Config, type Priority, rank } from "./config";
+import { refs } from "./followups";
 import { raised } from "./items";
 import { type Context, triage, type Triage } from "./llm";
 import { compareTs, type Signal } from "./signal";
@@ -38,18 +39,24 @@ export function lookups(
   );
   const linear = Object.keys(cfg.sources.linear);
   return first.items
-    .map((i) => ({
-      ...i,
-      priority: raised(
-        i.priority,
-        i.ids.flatMap((id) => at(id) ?? []),
-      ),
-    }))
-    .filter((i) => i.verify?.length && rank(i.priority) >= rank(minPriority))
+    .map((i) => {
+      const signals = i.ids.flatMap((id) => at(id) ?? []);
+      // PRs the messages link are always checked, so a merged one never depends on the LLM asking.
+      const linked = signals
+        .filter((s) => s.kind !== "github")
+        .flatMap((s) => refs(s.text).filter((r) => r.startsWith("github:")))
+        .map((r) => r.slice("github:".length));
+      return {
+        ...i,
+        priority: raised(i.priority, signals),
+        want: [...new Set([...(i.verify ?? []), ...linked])],
+      };
+    })
+    .filter((i) => i.want.length && rank(i.priority) >= rank(minPriority))
     .sort((a, b) => rank(b.priority) - rank(a.priority))
     .slice(0, ITEMS)
     .flatMap((i) =>
-      [...new Set(i.verify)]
+      i.want
         .flatMap((want): Lookup[] => {
           if (want === "thread") {
             const id = i.ids.findLast((id) => at(id)?.kind === "slack");
@@ -63,6 +70,7 @@ export function lookups(
           console.log(`look-up skipped, out of scope: ${JSON.stringify(want).slice(0, 80)}`);
           return [];
         })
+        .filter((l, n, all) => all.findIndex((m) => label(m) === label(l)) === n)
         .slice(0, PER_ITEM),
     );
 }

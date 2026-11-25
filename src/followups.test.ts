@@ -39,11 +39,13 @@ const evidence = (
   signals: Signal[],
   mine: Mine[] | undefined,
   ran = ["slack/acme"],
+  prs: Evidence["prs"] = new Map(),
 ): Evidence => ({
   ran: new Set(ran),
   signals,
   now,
   slack: new Map(mine ? [["acme", { mine, maxChannels: 30, maxMessages: 10 }]] : []),
+  prs,
 });
 const item = (signals: Signal[], priority: Item["priority"], category: string): Item => ({
   priority,
@@ -53,7 +55,15 @@ const item = (signals: Signal[], priority: Item["priority"], category: string): 
 });
 const settings = Config.shape.followups.parse({});
 const opts = (now: number, notified = true, signals: Signal[] = []) =>
-  ({ notified, minPriority: "normal", now, work, first: settings.first, signals }) as const;
+  ({
+    notified,
+    minPriority: "normal",
+    now,
+    work,
+    first: settings.first,
+    signals,
+    repos: new Set(["acme/api"]),
+  }) as const;
 const track = F.track;
 const update = (l: Followups, ev: Evidence, cfg = settings) => F.update(l, ev, cfg);
 const due = (l: Followups, ev: Evidence, fresh: Signal[]) =>
@@ -199,6 +209,41 @@ test("a Slack ask about a requested review is one loop, closed by the review, no
   // A PR no source reported isn't linked, so its absence can't close the ask.
   const other = track({}, [item([ask], "normal", "request")], [ask], opts(asked));
   expect(open(update(other, evidence(at(23, 15), [], [], ran)))).toHaveLength(1);
+});
+
+test("a Slack ask about a PR closes once every PR it names merges or I review it after the ask", () => {
+  const asked = at(23, 9);
+  const later = at(23, 15);
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const ask = slack("can you merge acme/api#7 and acme/api#8? also other/repo#1", asked);
+  const ledger = track({}, [item([ask], "normal", "request")], [ask], opts(asked));
+  expect(open(ledger)[0]!.prs).toEqual(["github:acme/api#7", "github:acme/api#8"]);
+  expect(F.watchedPrs(ledger, [])).toEqual(["github:acme/api#7", "github:acme/api#8"]);
+
+  const pr = (state: "OPEN" | "MERGED", closed?: number, reviewed?: number) => ({
+    state,
+    closedAt: closed ? iso(closed) : null,
+    viewerLatestReview: reviewed ? { submittedAt: iso(reviewed) } : null,
+  });
+  const run = (seven: ReturnType<typeof pr>, eight?: ReturnType<typeof pr>) =>
+    update(
+      ledger,
+      evidence(
+        later,
+        [ask],
+        [],
+        ["slack/acme"],
+        new Map([
+          ["github:acme/api#7", seven],
+          ...(eight ? [["github:acme/api#8", eight] as const] : []),
+        ]),
+      ),
+    );
+
+  // One merged and one not looked up, or merged before the ask, leaves the ask open.
+  expect(open(run(pr("MERGED", later)))).toHaveLength(1);
+  expect(open(run(pr("MERGED", later), pr("MERGED", asked - 1000)))).toHaveLength(1);
+  expect(reason(run(pr("MERGED", later), pr("OPEN", undefined, later)))).toBe("PR merged");
 });
 
 test("a new ask in the same thread replaces its loop, but a silent one never does", () => {

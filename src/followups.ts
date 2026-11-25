@@ -4,6 +4,7 @@ import type { Item } from "./actions";
 import { afterWork, type Config, Duration, type Priority, rank } from "./config";
 import { clip } from "./llm";
 import { compareTs, readState, type Signal, sourceId, writeState } from "./signal";
+import type { PrOutcome } from "./sources/github";
 import { LINEAR_LOOKBACK_MS } from "./sources/linear";
 import { type Mine, THREAD_STREAM } from "./sources/slack";
 
@@ -19,6 +20,8 @@ export type Loop = {
   /** Opened as a safety net under the threshold: reminds only while still unread or requested. */
   silent?: true;
   anchors: Anchor[];
+  /** PRs in configured repos its messages mention, as github:owner/repo#N; handled once all are. */
+  prs?: string[];
   url?: string;
   opened: string;
   next: string;
@@ -44,6 +47,8 @@ export type Evidence = {
   now: number;
   /** Slack source name → my recent messages and the caps on its unread scan. */
   slack: Map<string, { mine: Mine[]; maxChannels: number; maxMessages: number }>;
+  /** The PRs `watchedPrs` named, as github:owner/repo#N; a failed look-up is missing. */
+  prs: Map<string, PrOutcome>;
 };
 
 const HOUR = 3_600_000;
@@ -166,13 +171,17 @@ export function status(a: Anchor, ev: Evidence): { state: State; reason?: string
   if (!ev.ran.has(id)) return { state: "unknown" };
   const same = (s: Signal) => sourceId(s) === id;
   switch (a.kind) {
-    case "github":
-      return ev.signals.some((s) => same(s) && s.stream === a.stream)
-        ? { state: "pending" }
-        : {
-            state: "resolved",
-            reason: isReview(a) ? "reviewed or no longer requested" : "merged or no longer ready",
-          };
+    case "github": {
+      if (ev.signals.some((s) => same(s) && s.stream === a.stream)) return { state: "pending" };
+      if (isReview(a)) return { state: "resolved", reason: "reviewed or no longer requested" };
+      // A push or failing check also unreadies a PR; it notifies again once ready.
+      const pr = ev.prs.get(entity(a)!);
+      if (!pr) return { state: "unknown" };
+      return {
+        state: "resolved",
+        reason: pr.state === "OPEN" ? "no longer ready" : pr.state.toLowerCase(),
+      };
+    }
     case "linear":
       if (ev.signals.some((s) => same(s) && s.key === a.key)) return { state: "pending" };
       // The inbox is read back LINEAR_LOOKBACK_MS; older asks just aren't listed.
@@ -207,6 +216,44 @@ export function status(a: Anchor, ev: Evidence): { state: State; reason?: string
   return { state: "unknown" };
 }
 
+/**
+ * Why a loop whose messages mention PRs is handled: every one merged, closed, or reviewed by me
+ * after its latest message. A PR already merged when asked, e.g. "#7 merged, can you deploy?",
+ * doesn't count.
+ */
+function prsHandled(l: Loop, ev: Evidence): string | undefined {
+  if (!l.prs?.length) return undefined;
+  const since = Math.max(...l.anchors.map((a) => Number(a.ts) * 1000));
+  const after = (t: string | null | undefined) => !!t && Date.parse(t) > since;
+  const reasons = l.prs.map((k) => {
+    const pr = ev.prs.get(k);
+    if (pr && pr.state !== "OPEN" && after(pr.closedAt)) return `PR ${pr.state.toLowerCase()}`;
+    if (after(pr?.viewerLatestReview?.submittedAt)) return "reviewed PR";
+    return undefined;
+  });
+  return reasons.every(Boolean) ? reasons[0] : undefined;
+}
+
+/**
+ * PRs to look up before updating loops: those open loops mention, and ready-to-merge PRs no
+ * longer reported ready, to tell merged from unreadied.
+ */
+export function watchedPrs(ledger: Followups, signals: Signal[]): string[] {
+  const streams = new Set(signals.map((s) => s.stream));
+  return [
+    ...new Set(
+      Object.values(ledger)
+        .filter((l) => !l.closed)
+        .flatMap((l) => [
+          ...(l.prs ?? []),
+          ...l.anchors
+            .filter((a) => a.kind === "github" && !isReview(a) && !streams.has(a.stream))
+            .flatMap((a) => entity(a) ?? []),
+        ]),
+    ),
+  ];
+}
+
 /** Seen without a reply, and nothing suggests it is still unread or requested. */
 const seen = (states: State[]) =>
   states.includes("open") && !states.includes("pending") && !states.includes("unsure");
@@ -233,7 +280,10 @@ export function update(ledger: Followups, ev: Evidence, cfg: Settings): Followup
     const checked = deciding(loop).map((a) => status(a, ev));
     const states = checked.map((s) => s.state);
     // A loop about two PRs stays open while either is still waiting on me.
-    const done = !states.includes("pending") && checked.find((s) => s.state === "resolved");
+    const handled = prsHandled(loop, ev);
+    const done = handled
+      ? { reason: handled }
+      : !states.includes("pending") && checked.find((s) => s.state === "resolved");
     const reason = done
       ? done.reason!
       : loop.silent && seen(states)
@@ -344,6 +394,8 @@ export function track(
     first: number;
     /** Everything collected this run, to link mentions to. */
     signals: Signal[];
+    /** Configured GitHub repos, lowercase, whose mentioned PRs are looked up. */
+    repos: Set<string>;
   },
 ): Followups {
   const next = { ...ledger };
@@ -367,11 +419,13 @@ export function track(
       .map(anchor)
       .filter((a, i, all) => all.findIndex((b) => b.key === a.key) === i);
     const url = signals.findLast((s) => s.url)?.url;
+    const prs = [...mentioned].filter((k) => opts.repos.has(k.replace(/^github:|#\d+$/g, "")));
     next[id] = {
       ask,
       priority,
       ...(silent ? { silent: true as const } : {}),
       anchors,
+      ...(prs.length ? { prs } : {}),
       ...(url ? { url } : {}),
       opened: at,
       next: new Date(
