@@ -142,20 +142,29 @@ export async function connectServer(name: string, env: Record<string, string>): 
   return client;
 }
 
-/** Calls a tool and returns its text, throwing on a tool error. */
+/** Slack errors from its own side that usually clear within seconds. */
+const TRANSIENT = /\b(internal_error|fatal_error|service_unavailable|request_timeout)\b/;
+const RETRY_DELAYS_MS = [2_000, 5_000];
+
+/** Calls a tool and returns its text, retrying transient Slack errors and throwing on others. */
 export async function callText(
   client: Client,
   tool: string,
   args: Record<string, unknown>,
 ): Promise<string> {
-  const result = await client.callTool({ name: tool, arguments: args }, undefined, {
-    timeout: TIMEOUT_MS,
-  });
-  const text = (result.content as { type: string; text?: string }[])
-    .flatMap((c) => (c.type === "text" && c.text ? [c.text] : []))
-    .join("");
-  if (result.isError) throw new Error(`${tool}: ${text}`);
-  return text;
+  for (let attempt = 0; ; attempt++) {
+    const result = await client.callTool({ name: tool, arguments: args }, undefined, {
+      timeout: TIMEOUT_MS,
+    });
+    const text = (result.content as { type: string; text?: string }[])
+      .flatMap((c) => (c.type === "text" && c.text ? [c.text] : []))
+      .join("");
+    if (!result.isError) return text;
+    const delay = RETRY_DELAYS_MS[attempt];
+    if (delay === undefined || !TRANSIENT.test(text)) throw new Error(`${tool}: ${text}`);
+    console.warn(`${tool}: ${text}; retrying`);
+    await Bun.sleep(delay);
+  }
 }
 
 /**
@@ -335,26 +344,37 @@ export async function slackContext(
 }
 
 /**
- * The messages I reacted to lately, as `channel:ts` with channel named like the unread scan, so
- * a reaction can answer a follow-up. Reaction rows from the server carry counts, not who reacted,
- * so this asks Slack's web API.
+ * Which of these messages I reacted to, as `channel:ts`, so a reaction can answer a follow-up.
+ * Reaction rows from the server carry counts, not who reacted, so this asks Slack's web API.
+ * Desktop session tokens can't call reactions.list, so each message is read with reactions.get.
  */
 export async function myReactions(
   name: string,
   server: SlackServer,
   env: Record<string, string | undefined>,
+  messages: { channel: string; ts: string }[],
 ): Promise<Set<string>> {
-  const res = (await webApi(name, env)("reactions.list", { limit: "100" })) as {
-    items?: { type: string; channel?: string; message?: { ts?: string } }[];
-  };
-  const channel = channelNamer(server.channels);
-  return new Set(
-    (res.items ?? []).flatMap((i) =>
-      i.type === "message" && i.channel && i.message?.ts
-        ? [`${channel(i.channel)}:${i.message.ts}`]
-        : [],
-    ),
-  );
+  const out = new Set<string>();
+  if (!server.me.id) return out;
+  const api = webApi(name, env);
+  const ids = new Map(server.channels.map((c) => [c.name, c.id]));
+  for (const { channel, ts } of messages) {
+    let res: { message?: { reactions?: { users?: string[] }[] } };
+    try {
+      res = await api("reactions.get", {
+        channel: ids.get(channel) ?? channel,
+        timestamp: ts,
+        full: "true",
+      });
+    } catch (e) {
+      // A deleted message or a channel I left can't be answered by reacting.
+      if (/message_not_found|channel_not_found/.test(String(e))) continue;
+      throw e;
+    }
+    if (res.message?.reactions?.some((r) => r.users?.includes(server.me.id)))
+      out.add(`${channel}:${ts}`);
+  }
+  return out;
 }
 
 type Channel = { id: string; name: string; im?: boolean; mpim?: boolean };

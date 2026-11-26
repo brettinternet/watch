@@ -312,10 +312,11 @@ async function run(
   const prs = new Map<string, PrOutcome>();
   // My reactions answer Slack asks; reading them needs the desktop session's web API.
   const reacted = new Map<string, Set<string>>();
-  const asked = new Set(
+  const asked = Map.groupBy(
     Object.values(ledgerBefore).flatMap((l) =>
-      l.closed ? [] : l.anchors.flatMap((a) => (a.kind === "slack" ? [a.source] : [])),
+      l.closed ? [] : l.anchors.filter((a) => a.kind === "slack"),
     ),
+    (a) => a.source,
   );
   await Promise.all([
     ...watchedPrs(ledgerBefore, all).map(async (key) => {
@@ -330,7 +331,7 @@ async function run(
       .filter(([name]) => asked.has(name) && process.env[`SLACK_${name.toUpperCase()}_XOXC_TOKEN`])
       .map(async ([name, server]) => {
         try {
-          reacted.set(name, await myReactions(name, server, process.env));
+          reacted.set(name, await myReactions(name, server, process.env, asked.get(name)!));
         } catch (e) {
           console.error(`follow-up reactions ${name}: ${message(e)}`);
         }
