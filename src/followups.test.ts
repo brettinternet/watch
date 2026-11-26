@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Item } from "./actions";
-import { Config } from "./config";
+import { Config, inWorkHours, nextWorkStart } from "./config";
 import * as F from "./followups";
 import type { Evidence, Followups } from "./followups";
 import type { Signal } from "./signal";
@@ -75,6 +75,27 @@ const remind = (l: Followups, ids: string[], now: number) =>
   F.remind(l, ids, now, work, settings.again);
 const open = (l: Followups) => Object.values(l).filter((x) => !x.closed);
 const reason = (l: Followups) => Object.values(l)[0]!.closed?.reason;
+
+test("off days are weekend days: no work hours, and the next work start skips them", () => {
+  const parse = (off: string[]) =>
+    Config.safeParse({
+      version: 1,
+      llm: {},
+      categories: { fyi: "x" },
+      notify: {},
+      work_hours: { ...work, off },
+    });
+  const off = parse(["2026-11-27..2026-11-30", "2026-12-02"]).data!.work_hours;
+  expect(inWorkHours(off, new Date(at(27, 10)))).toBe(false);
+  expect(inWorkHours(off, new Date(at(26, 10)))).toBe(true);
+  expect(nextWorkStart(off, at(26, 16))).toBe(new Date(2026, 11, 1, 8).getTime());
+  expect(nextWorkStart(off, at(30, 23))).toBe(new Date(2026, 11, 1, 8).getTime());
+  expect(nextWorkStart(off, new Date(2026, 11, 1, 16).getTime())).toBe(
+    new Date(2026, 11, 3, 8).getTime(),
+  );
+  expect(parse(["2026-02-30"]).success).toBe(false);
+  expect(parse(["2026-12-02..2026-12-01"]).success).toBe(false);
+});
 
 test("a notified ask reminds on the work-hours clock twice while unread, once after I read it", () => {
   const asked = at(20, 17); // Friday 17:00

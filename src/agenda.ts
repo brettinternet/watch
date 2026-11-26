@@ -5,7 +5,7 @@
  * 1 failure.
  */
 import { resolve } from "node:path";
-import { loadConfig } from "./config";
+import { loadConfig, workDay } from "./config";
 import { clip } from "./llm";
 import { notify, tellArgv } from "./notify";
 import { type WebApi, webApi } from "./sources/slack";
@@ -81,6 +81,10 @@ const hhmm = (d: Date) => d.toLocaleTimeString("en-GB", { hour: "2-digit", minut
 async function main(dryRun: boolean): Promise<number> {
   const root = resolve(import.meta.dir, "..");
   const cfg = loadConfig(root);
+  if (cfg.work_hours && !workDay(cfg.work_hours, new Date())) {
+    console.log("not a work day; skipping");
+    return NOOP;
+  }
   const sources = Object.keys(cfg.sources.slack);
   if (sources.length === 0) {
     console.log("no slack source; skipping");

@@ -18,7 +18,7 @@ jobs:
   agenda:
     description: >
       Notify today's meetings from the Outlook Calendar app's Home tab in Slack.
-      Noop (78) means no meetings today. A missed run catches up once on wake.
+      Noop (78) means no meetings today or not a work day (triage.yaml work_hours). A missed run catches up once on wake.
     schedule: "${AGENDA_SCHEDULE:-30 7 * * 1-5}"
     timeout: 5m
     overlap: skip

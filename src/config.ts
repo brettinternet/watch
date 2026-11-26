@@ -15,6 +15,20 @@ export const Duration = z
 
 export const DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
 
+/** A local date, YYYY-MM-DD, or an inclusive range of them, as [from, to]. */
+const DayOff = z
+  .string()
+  .regex(
+    /^\d{4}-\d{2}-\d{2}(\.\.\d{4}-\d{2}-\d{2})?$/,
+    "use a date like 2026-12-24 or 2026-12-24..2027-01-01",
+  )
+  .transform((s) => s.split("..") as [string] | [string, string])
+  .refine((d) => d.every((x) => new Date(`${x}T00:00Z`).toISOString().startsWith(x)), {
+    message: "invalid date",
+  })
+  .refine((d) => d.length === 1 || d[0] <= d[1], { message: "range must not end before it starts" })
+  .transform((d) => [d[0], d.at(-1)!] as const);
+
 /** Minimum priority for a VIP or channel. Empty means normal; emergency would page on every message. */
 const Floor = z
   .enum(["low", "normal", "high"])
@@ -227,6 +241,8 @@ export const Config = z
         days: z.array(z.enum(DAYS)).min(1),
         start: z.number().int().min(0).max(23),
         end: z.number().int().min(1).max(24),
+        // Vacation and holidays: these days are treated like weekend days.
+        off: z.array(DayOff).optional(),
       })
       .strict()
       .refine((w) => w.start < w.end, { message: "start must be before end" })
@@ -300,10 +316,22 @@ export function due(schedule: string | undefined, last: number | undefined, now:
   return next !== null && next.getTime() <= now;
 }
 
+const localDate = (at: Date) =>
+  `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`;
+
+/** Whether `at` falls on a work day: one of work_hours.days and not off. */
+export function workDay(work: NonNullable<Config["work_hours"]>, at: Date): boolean {
+  const date = localDate(at);
+  return (
+    work.days.includes(DAYS[at.getDay()]!) &&
+    !work.off?.some(([from, to]) => date >= from && date <= to)
+  );
+}
+
 export function inWorkHours(work: Config["work_hours"], at: Date): boolean {
   if (!work) return true;
   const hour = at.getHours();
-  return work.days.includes(DAYS[at.getDay()]!) && hour >= work.start && hour < work.end;
+  return workDay(work, at) && hour >= work.start && hour < work.end;
 }
 
 const STEP_MS = 5 * 60_000;
@@ -321,7 +349,7 @@ export function nextWorkStart(work: Config["work_hours"], from: number): number 
   const at = new Date(from);
   at.setHours(work?.start ?? 0, 0, 0, 0);
   do at.setDate(at.getDate() + 1);
-  while (work && !work.days.includes(DAYS[at.getDay()]!));
+  while (work && !workDay(work, at));
   return at.getTime();
 }
 

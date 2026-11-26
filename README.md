@@ -154,7 +154,7 @@ All of these are gitignored or live in `.git`.
 4. If it reaches `notify.min_priority`, run `tell notify` with `notify.args[priority]`. Emergency priority repeats every `retry` until acknowledged or `expire`.
 5. Run matching actions, then advance the cursors and open [follow-ups](#follow-ups) for the asks.
 
-Outside `work_hours` (weekdays 8–18 local time by default), only items at `notify.after_hours_min_priority` (default `high`) notify or run actions, and the summary covers only them. Those runs advance separate cursors in `.state/after-hours-cursors.json`, so the first work-hours run summarizes everything held overnight or over the weekend, reaching back past `max_age` to the previous work-hours run. Urgent items alerted after hours appear again in that summary, and their actions can run again.
+Outside `work_hours` (weekdays 8–18 local time by default), and on any `work_hours.off` dates or ranges (`[2026-12-24, 2026-12-28..2027-01-01]`) for vacation and holidays, only items at `notify.after_hours_min_priority` (default `high`) notify or run actions, and the summary covers only them. Those runs advance separate cursors in `.state/after-hours-cursors.json`, so the first work-hours run summarizes everything held overnight or over the weekend, reaching back past `max_age` to the previous work-hours run. Urgent items alerted after hours appear again in that summary, and their actions can run again.
 
 A run exits 0 after notifying, 78 (a Noon noop) when nothing reached the threshold, and 1 on any failure. Slack calls retry Slack's transient errors (such as `internal_error`) twice before failing. A failed notification or LLM call leaves its messages for the next run, which reaches back to the last successful work-hours run once the failure clears. A failed look-up is only logged. A failed second call keeps the first pass but still exits 1, and Noon's `on_failure` hook notifies once when a streak of failures starts.
 
@@ -275,7 +275,7 @@ A message can steer the agent into posting what it read, such as repository code
 
 ## Daily agenda
 
-The `agenda` job sends one quiet notification listing today's meetings from the [Outlook Calendar](https://slack.com/apps/AFV5ECLBZ) app's Home tab, in the first Slack source where the app is installed. It opens the tab through Slack's web API with that source's desktop `xoxc`/`xoxd` session, as the client does, waits for the app to publish today's view, and reads the events from its blocks; no LLM is involved. It exits 78 when there are no meetings. Open the app's Home tab once in Slack before the first run. Preview with `task agenda -- --dry-run`.
+The `agenda` job sends one quiet notification listing today's meetings from the [Outlook Calendar](https://slack.com/apps/AFV5ECLBZ) app's Home tab, in the first Slack source where the app is installed. It opens the tab through Slack's web API with that source's desktop `xoxc`/`xoxd` session, as the client does, waits for the app to publish today's view, and reads the events from its blocks; no LLM is involved. It exits 78 when there are no meetings or today is not a work day under `work_hours`, including `off` dates. Open the app's Home tab once in Slack before the first run. Preview with `task agenda -- --dry-run`.
 
 ## Agent sessions
 
