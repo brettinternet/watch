@@ -156,17 +156,25 @@ const loopId = (signals: Signal[]) =>
 
 /**
  * One PR's line comes from its number and title, since the LLM's reason can read the same for
- * every PR. The author is left out of ready PRs, which are always mine.
+ * every PR; several PRs' line names each number. The author is left out of ready PRs, which are
+ * always mine.
  */
 const line = (signals: Signal[], reason: string) => {
   const last = signals.at(-1)!;
-  if (last.kind === "github" && last.stream && signals.every((s) => s.stream === last.stream)) {
-    const who = isReview(last) ? `${last.author} · ` : "";
+  const prs = [
+    ...new Set(signals.flatMap((s) => (s.kind === "github" && s.stream ? [prRef(s.stream)] : []))),
+  ];
+  const who = signals.some((s) => !(s.kind === "github" && s.stream) || isReview(s))
+    ? `${last.author} · `
+    : "";
+  if (prs.length === 1 && signals.every((s) => s.stream === last.stream)) {
     const text = last.url ? last.text.replace(` — ${last.url}`, "") : last.text;
-    return `${who}${last.stream.replace(/:[a-z]+$/, "")}: ${text}`;
+    return `${who}${prs[0]}: ${text}`;
   }
-  return `${last.author} · ${signals[0]!.channel}: ${reason}`;
+  return `${who}${prs.length ? prs.join(", ") : signals[0]!.channel}: ${reason}`;
 };
+
+const prRef = (stream: string) => stream.replace(/:[a-z]+$/, "");
 
 type State = "resolved" | "pending" | "open" | "unsure" | "unknown";
 

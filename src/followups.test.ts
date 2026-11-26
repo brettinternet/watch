@@ -149,6 +149,10 @@ test("a GitHub review request closes only when its source ran and no longer list
   const ledger = track({}, [generic], [pr], opts(asked));
   // The PR's own number and title, not the LLM's reason, which can read the same for every PR.
   expect(open(ledger).map((l) => l.ask)).toEqual(["pat · acme/api#7: Review requested: PR 7"]);
+  // An item spanning PRs names each one.
+  const two = { ...item([review(8, asked), review(9, asked)], "normal", "review"), reason: "x" };
+  const both = track({}, [two], two.signals, opts(asked));
+  expect(open(both).map((l) => l.ask)).toEqual(["pat · acme/api#8, acme/api#9: x"]);
 
   expect(open(update(ledger, evidence(later, [], undefined, [])))).toHaveLength(1); // gh failed
   const stillRequested = evidence(later, [review(7, asked)], undefined, ["github/work"]);
